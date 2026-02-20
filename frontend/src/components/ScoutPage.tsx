@@ -1,7 +1,32 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry } from '../api';
+import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus } from '../api';
 import { Play, Loader2, Sparkles, Save, ShieldAlert, Send, MessageSquare, RefreshCw, History as HistoryIcon, X } from 'lucide-react';
+
+// --- Status Helpers ---
+const USER_STATUSES = ['NEW', 'LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER', 'BLOCKED', 'REJECTED'] as const;
+type UserStatusType = typeof USER_STATUSES[number];
+
+const STATUS_EMOJI: Record<UserStatusType, string> = {
+    NEW: '🆕',
+    LEAD: '🔥',
+    QUALIFIED: '✅',
+    MATCHED: '🤝',
+    CUSTOMER: '💎',
+    BLOCKED: '🚫',
+    REJECTED: '❌',
+};
+
+const getUserStatusEmoji = (status?: string) => STATUS_EMOJI[(status as UserStatusType) || 'LEAD'] || '🔥';
+
+// Profile completeness based on sender info
+const getProfileEmoji = (profile?: any) => {
+    if (!profile) return '';
+    const filledFields = [profile.activity, profile.city, profile.businessCard].filter(Boolean).length;
+    if (filledFields === 0) return '📋'; // Empty
+    if (filledFields < 2) return '📝'; // Partial
+    return '📊'; // Mostly complete
+};
 
 interface Lead {
     id: number; // Message ID from Telegram
@@ -26,7 +51,8 @@ interface Lead {
     isAnalyzing?: boolean;
     isImported?: boolean;
     isSending?: boolean; // sending status
-    customContext?: string; // Add this to Lead interface if missing in original
+    customContext?: string;
+    userStatus?: string; // Current status fetched/set
 }
 
 const SCENARIO_OPTIONS = [
@@ -341,15 +367,44 @@ const ScoutPage = () => {
                     <div key={idx} className={`border rounded - lg p - 4 bg - card shadow - sm ${lead.isImported ? 'opacity-50 border-green-500/30' : 'border-border'} `}>
                         {/* Header */}
                         <div className="flex justify-between items-start mb-2">
-                            <div className="flex items-center gap-2">
-                                <div className="font-bold text-lg text-primary">
+                            <div className="flex items-center gap-2 flex-wrap">
+                                <div className="font-bold text-lg text-primary flex items-center gap-1">
                                     {lead.sender.firstName} {lead.sender.lastName}
+                                    {/* Profile completeness emoji (shows when analyzed) */}
+                                    {lead.analysis && <span title="Profile completeness">{getProfileEmoji(lead.analysis.profile)}</span>}
                                 </div>
                                 <div className="text-sm text-muted-foreground">@{lead.sender.username || 'No Username'}</div>
                                 {lead.isAdmin && (
                                     <span className="bg-red-500/10 text-red-400 text-xs px-2 py-0.5 rounded border border-red-500/20 flex items-center gap-1">
-                                        <ShieldAlert className="w-3 h-3" /> Admin
+                                        <ShieldAlert className="w-3 h-3" /> 👑 Admin
                                     </span>
+                                )}
+                                {/* User status badge with emoji */}
+                                <span className="text-xs bg-muted px-2 py-0.5 rounded border border-border/50" title="User status">
+                                    {getUserStatusEmoji(lead.userStatus || 'LEAD')} {lead.userStatus || 'LEAD'}
+                                </span>
+                                {/* Quick status change (Admin control) */}
+                                {!lead.isAdmin && (
+                                    <select
+                                        className="text-xs bg-background border border-border rounded px-1.5 py-0.5 text-muted-foreground cursor-pointer hover:border-primary/50 transition-colors"
+                                        value={lead.userStatus || 'LEAD'}
+                                        onChange={async (e) => {
+                                            const newStatus = e.target.value;
+                                            try {
+                                                await updateUserStatus(lead.sender.id, newStatus);
+                                                const newLeads = [...leads];
+                                                newLeads[idx].userStatus = newStatus;
+                                                setLeads(newLeads);
+                                            } catch (err) {
+                                                alert('Failed to update status');
+                                            }
+                                        }}
+                                        title="Change user status"
+                                    >
+                                        {USER_STATUSES.map(s => (
+                                            <option key={s} value={s}>{STATUS_EMOJI[s]} {s}</option>
+                                        ))}
+                                    </select>
                                 )}
                             </div>
                             <div className="text-xs text-muted-foreground">

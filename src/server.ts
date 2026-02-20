@@ -218,6 +218,29 @@ fastify.get('/dialogues/:id', async (req, reply) => {
     }
 });
 
+// Update user status (admin action)
+fastify.patch('/users/:telegramId/status', async (req, reply) => {
+    const { telegramId } = req.params as { telegramId: string };
+    const { status } = req.body as { status: string };
+
+    const validStatuses = ['NEW', 'LEAD', 'QUALIFIED', 'REJECTED', 'MATCHED', 'BLOCKED', 'CUSTOMER'];
+    if (!validStatuses.includes(status)) {
+        return reply.code(400).send({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
+    }
+
+    try {
+        const user = await prisma.user.update({
+            where: { telegramId },
+            data: { status: status as any }
+        });
+        return { success: true, user };
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: `Failed to update status: ${e.message}` });
+    }
+});
+
+
 fastify.get('/status', async (request, reply) => {
     console.log('[API] /status called');
     try {

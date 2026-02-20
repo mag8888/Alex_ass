@@ -115,3 +115,11 @@ export const getScanHistoryEntry = async (id: number) => {
     const response = await api.get<{ leads: any[]; chat: any; keywords: string }>('/scout/history/' + id);
     return response.data;
 };
+
+// --- User Status API ---
+
+export const updateUserStatus = async (telegramId: string, status: string) => {
+    const response = await api.patch(`/users/${telegramId}/status`, { status });
+    return response.data;
+};
+
