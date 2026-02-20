@@ -750,7 +750,9 @@ fastify.post('/scout/chats', async (req, reply) => {
 fastify.get('/scout/chats/:username/leads', async (req, reply) => {
     const { username } = req.params as { username: string };
     const { limit, keywords } = req.query as { limit?: string, keywords?: string };
-    const scanLimit = limit ? parseInt(limit) : 50;
+    const rawLimit = limit ? parseInt(limit) : 50;
+    const scanLimit = Math.min(rawLimit, 300); // Cap at 300 to prevent Railway timeout
+    if (rawLimit > 300) console.warn(`[Scout] Requested limit ${rawLimit} capped to 300.`);
     const customKeywords = keywords ? keywords.split(',').map(k => k.trim()).filter(k => k.length > 0) : undefined;
 
     try {

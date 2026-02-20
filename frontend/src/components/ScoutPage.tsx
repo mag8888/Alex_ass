@@ -368,9 +368,9 @@ const ScoutPage = () => {
                             type="number"
                             className="w-12 text-sm bg-transparent focus:outline-none"
                             value={scanLimit}
-                            onChange={(e) => setScanLimit(Number(e.target.value))}
+                            onChange={(e) => setScanLimit(Math.min(Number(e.target.value), 300))}
                             min={10}
-                            max={500}
+                            max={300}
                         />
                     </div>
                     <div className="flex items-center gap-1 bg-background border rounded px-2 py-1 w-64">
