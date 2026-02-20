@@ -109,6 +109,63 @@ const ScoutPage = () => {
     const [allLeads, setAllLeads] = useState<Lead[]>([]); // Aggregated leads from all chats
     const [showAllLeads, setShowAllLeads] = useState(false);
 
+    // DM Queue
+    type QueueItem = { lead: Lead; draft: string; chatUsername: string };
+    const [dmQueue, setDmQueue] = useState<QueueItem[]>([]);
+    const [queueRunning, setQueueRunning] = useState(false);
+    const [queueDelay, setQueueDelay] = useState(5); // seconds between sends
+    const [showQueue, setShowQueue] = useState(false);
+
+    const addToQueue = (lead: Lead) => {
+        if (!lead.analysis?.draft) return;
+        const chatId = username || 'unknown';
+        if (dmQueue.find(item => item.lead.sender.id === lead.sender.id)) {
+            alert(`@${lead.sender.username || lead.sender.id} уже в очереди`);
+            return;
+        }
+        setDmQueue(prev => [...prev, { lead, draft: lead.analysis!.draft, chatUsername: chatId }]);
+        setShowQueue(true);
+    };
+
+    const removeFromQueue = (senderId: string) => {
+        setDmQueue(prev => prev.filter(item => item.lead.sender.id !== senderId));
+    };
+
+    const runQueue = async () => {
+        if (queueRunning || dmQueue.length === 0) return;
+        setQueueRunning(true);
+
+        const queue = [...dmQueue];
+        for (let i = 0; i < queue.length; i++) {
+            const item = queue[i];
+            const name = item.lead.analysis?.profile?.name || item.lead.sender.firstName || 'Friend';
+            try {
+                console.log(`[Queue] Sending DM to @${item.lead.sender.username || item.lead.sender.id}...`);
+                await sendScoutDM(
+                    item.lead.sender.username || item.lead.sender.id,
+                    item.draft,
+                    name,
+                    item.lead.sender.accessHash || undefined
+                );
+                console.log(`[Queue] ✅ Sent to @${item.lead.sender.username}`);
+                setDmQueue(prev => prev.filter(q => q.lead.sender.id !== item.lead.sender.id));
+            } catch (e: any) {
+                console.error(`[Queue] ❌ Failed for @${item.lead.sender.username}:`, e);
+                // Stop on error to avoid spam
+                alert(`Очередь остановлена: ошибка для @${item.lead.sender.username || item.lead.sender.id}\n${e.message}`);
+                break;
+            }
+
+            // Delay between sends (except after last)
+            if (i < queue.length - 1) {
+                await new Promise(r => setTimeout(r, queueDelay * 1000));
+            }
+        }
+
+        setQueueRunning(false);
+    };
+
+
     useEffect(() => {
         if (username) {
             handleScan(username);
@@ -441,8 +498,62 @@ const ScoutPage = () => {
                 </div>
             )}
 
+            {/* DM Queue Panel */}
+            {showQueue && (
+                <div className="mb-4 p-4 bg-blue-500/5 border border-blue-500/20 rounded-lg max-w-3xl mx-auto w-full">
+                    <div className="flex justify-between items-center mb-3">
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold text-sm">📤 Очередь ДМ</span>
+                            <span className="text-sm text-muted-foreground bg-blue-500/10 px-2 py-0.5 rounded-full font-mono">{dmQueue.length}</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            <label className="flex items-center gap-1 text-xs text-muted-foreground">
+                                Задержка:
+                                <input
+                                    type="number"
+                                    min={3} max={60}
+                                    value={queueDelay}
+                                    onChange={e => setQueueDelay(Number(e.target.value))}
+                                    className="w-10 bg-background border border-border rounded px-1 text-center"
+                                />
+                                сек
+                            </label>
+                            <button
+                                onClick={runQueue}
+                                disabled={queueRunning || dmQueue.length === 0}
+                                className="flex items-center gap-1 px-3 py-1.5 bg-blue-600 text-white rounded text-sm hover:bg-blue-700 disabled:opacity-50"
+                            >
+                                {queueRunning ? <Loader2 className="w-3 h-3 animate-spin" /> : <Send className="w-3 h-3" />}
+                                {queueRunning ? 'Отправка...' : 'Запустить'}
+                            </button>
+                            <button onClick={() => setShowQueue(false)} className="text-muted-foreground hover:text-foreground">
+                                <X className="w-4 h-4" />
+                            </button>
+                        </div>
+                    </div>
+                    {dmQueue.length === 0 ? (
+                        <p className="text-xs text-muted-foreground">Очередь пуста. Анализируй лидов и добавляй через «+ В очередь».</p>
+                    ) : (
+                        <div className="space-y-1">
+                            {dmQueue.map((item, i) => (
+                                <div key={item.lead.sender.id} className="flex items-center justify-between text-sm py-1 px-2 bg-background rounded border border-border/50">
+                                    <span className="text-primary font-medium">#{i + 1} @{item.lead.sender.username || item.lead.sender.id}</span>
+                                    <div className="flex items-center gap-2">
+                                        <span className="text-xs text-muted-foreground truncate max-w-[240px]">{item.draft.slice(0, 60)}...</span>
+                                        <button onClick={() => removeFromQueue(item.lead.sender.id)} className="text-muted-foreground hover:text-red-400">
+                                            <X className="w-3 h-3" />
+                                        </button>
+                                    </div>
+                                </div>
+                            ))}
+                        </div>
+                    )}
+                </div>
+            )}
+
             <div className="space-y-6 max-w-3xl mx-auto w-full">
                 {/* Which leads to show: all-leads mode or single-chat mode */}
+
                 {(showAllLeads ? allLeads : leads).length === 0 && !scanning && !parseAllProgress && (
                     <div className="text-muted-foreground text-center py-10">No relevant leads found in last 50 messages.</div>
                 )}
@@ -712,6 +823,15 @@ const ScoutPage = () => {
                                         className="mr-auto px-3 py-1 text-sm text-muted-foreground hover:text-foreground"
                                     >
                                         Cancel
+                                    </button>
+
+                                    {/* Queue Button */}
+                                    <button
+                                        onClick={() => addToQueue(lead)}
+                                        className="flex items-center gap-1 px-3 py-2 bg-blue-500/10 text-blue-500 border border-blue-500/20 rounded hover:bg-blue-500/20 text-sm transition-colors"
+                                        title="Добавить в очередь отправки ДМ"
+                                    >
+                                        + В очередь
                                     </button>
 
                                     {/* Send Buttons */}
