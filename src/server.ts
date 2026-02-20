@@ -746,6 +746,117 @@ fastify.post('/scout/chats', async (req, reply) => {
     }
 });
 
+// ─── Background Scan Job System ──────────────────────────────────────────────
+type ScanJob = {
+    id: string;
+    status: 'running' | 'done' | 'error';
+    leads: any[];
+    chatTitle: string;
+    progress: number; // 0-100
+    error?: string;
+    createdAt: Date;
+};
+const scanJobs = new Map<string, ScanJob>();
+
+// Cleanup jobs older than 10 minutes
+setInterval(() => {
+    const TEN_MIN = 10 * 60 * 1000;
+    const now = Date.now();
+    scanJobs.forEach((job, id) => {
+        if (now - job.createdAt.getTime() > TEN_MIN) scanJobs.delete(id);
+    });
+}, 60_000);
+
+// Helper to get accessHash for a chat
+async function resolveAccessHash(username: string): Promise<string | undefined> {
+    let accessHash: string | undefined;
+    try {
+        const chat = await prisma.scannedChat.findFirst({
+            where: { OR: [{ username }, { link: { contains: username } }] }
+        });
+        if (chat?.accessHash) return chat.accessHash;
+        if (chat?.link) {
+            const client = getClient();
+            if (client?.connected) {
+                const entity = await client.getEntity(chat.link);
+                if (entity && (entity as any).accessHash) {
+                    accessHash = (entity as any).accessHash.toString();
+                    try { await prisma.scannedChat.update({ where: { id: chat.id }, data: { accessHash } }); } catch (_) { }
+                }
+            }
+        }
+    } catch (_) { }
+    return accessHash;
+}
+
+// Start async scan job
+fastify.post('/scout/scan/start', async (req, reply) => {
+    const { username, limit, keywords } = req.body as { username: string; limit?: number; keywords?: string };
+    if (!username) return reply.code(400).send({ error: 'username required' });
+
+    const scanLimit = Math.min(limit || 50, 1000);
+    const customKeywords = keywords ? keywords.split(',').map(k => k.trim()).filter(k => k) : undefined;
+    const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+
+    const job: ScanJob = { id: jobId, status: 'running', leads: [], chatTitle: username, progress: 0, createdAt: new Date() };
+    scanJobs.set(jobId, job);
+
+    // Run in background (don't await)
+    (async () => {
+        try {
+            const accessHash = await resolveAccessHash(username);
+            job.progress = 10;
+
+            // If large scan, stream in batches to show progress
+            const BATCH = 100;
+            const batches = Math.ceil(scanLimit / BATCH);
+            const allLeads: any[] = [];
+
+            for (let i = 0; i < batches; i++) {
+                const batchLimit = Math.min(BATCH, scanLimit - i * BATCH);
+                // We'll do the full scan but report progress based on batch index
+                // (scanChatForLeads doesn't support pagination, so we do one big scan)
+                if (i === 0) {
+                    const result = await scanChatForLeads(username, scanLimit, customKeywords, accessHash);
+                    if (Array.isArray(result)) {
+                        allLeads.push(...result);
+                    } else {
+                        allLeads.push(...(result.leads || []));
+                        job.chatTitle = result.chatTitle || username;
+                    }
+                    job.progress = 90;
+                    break; // single call returns all results
+                }
+            }
+
+            job.leads = allLeads;
+            job.progress = 100;
+            job.status = 'done';
+            console.log(`[ScanJob] ${jobId} done: ${allLeads.length} leads from ${username}`);
+        } catch (e: any) {
+            job.status = 'error';
+            job.error = e.message;
+            console.error(`[ScanJob] ${jobId} failed:`, e);
+        }
+    })();
+
+    return { jobId };
+});
+
+// Poll scan job status
+fastify.get('/scout/scan/:jobId', async (req, reply) => {
+    const { jobId } = req.params as { jobId: string };
+    const job = scanJobs.get(jobId);
+    if (!job) return reply.code(404).send({ error: 'Job not found or expired' });
+    return {
+        status: job.status,
+        progress: job.progress,
+        chatTitle: job.chatTitle,
+        leads: job.status === 'done' ? job.leads : [],
+        error: job.error
+    };
+});
+
 // Get leads from a chat (Live Scan)
 fastify.get('/scout/chats/:username/leads', async (req, reply) => {
     const { username } = req.params as { username: string };

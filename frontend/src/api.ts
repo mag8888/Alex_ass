@@ -130,4 +130,20 @@ export const addIgnoreTrigger = async (keyword: string, type: 'USERNAME' | 'KEYW
     return response.data;
 };
 
+// --- Async Background Scan ---
 
+export const startScanJob = async (username: string, limit: number, keywords?: string): Promise<{ jobId: string }> => {
+    const response = await api.post('/scout/scan/start', { username, limit, keywords });
+    return response.data;
+};
+
+export const pollScanJob = async (jobId: string): Promise<{
+    status: 'running' | 'done' | 'error';
+    progress: number;
+    chatTitle: string;
+    leads: any[];
+    error?: string;
+}> => {
+    const response = await api.get(`/scout/scan/${jobId}`);
+    return response.data;
+};

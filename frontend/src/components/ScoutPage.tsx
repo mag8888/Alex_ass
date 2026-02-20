@@ -1,6 +1,7 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats, addIgnoreTrigger } from '../api';
+import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats, addIgnoreTrigger, startScanJob, pollScanJob } from '../api';
+
 import { Play, Loader2, Sparkles, Save, ShieldAlert, Send, MessageSquare, RefreshCw, History as HistoryIcon, X } from 'lucide-react';
 
 // --- Status Helpers ---
@@ -108,6 +109,8 @@ const ScoutPage = () => {
     const [parseAllProgress, setParseAllProgress] = useState<{ current: number; total: number; chatName: string } | null>(null);
     const [allLeads, setAllLeads] = useState<Lead[]>([]); // Aggregated leads from all chats
     const [showAllLeads, setShowAllLeads] = useState(false);
+    const [scanProgress, setScanProgress] = useState<number | null>(null); // null = not scanning, 0-100
+
 
     // DM Queue
     type QueueItem = { lead: Lead; draft: string; chatUsername: string };
@@ -178,20 +181,39 @@ const ScoutPage = () => {
     const handleScan = async (chatUsername: string) => {
         setScanning(true);
         setLeads([]);
-        setChatTitle(chatUsername); // Default
+        setScanProgress(null);
+        setChatTitle(chatUsername);
         try {
-            const data = await scanChat(chatUsername, scanLimit, scanKeywords);
-            // Support both old array format and new object format
-            if (Array.isArray(data)) {
-                setLeads(data);
+            // Use async background scan for large limits (> 100)
+            if (scanLimit > 100) {
+                setScanProgress(0);
+                const { jobId } = await startScanJob(chatUsername, scanLimit, scanKeywords);
+                // Poll until done
+                while (true) {
+                    await new Promise(r => setTimeout(r, 2000));
+                    const job = await pollScanJob(jobId);
+                    setScanProgress(job.progress);
+                    if (job.status === 'done') {
+                        setLeads(job.leads || []);
+                        setChatTitle(job.chatTitle || chatUsername);
+                        break;
+                    }
+                    if (job.status === 'error') {
+                        alert(`Scan failed: ${job.error}`);
+                        break;
+                    }
+                }
             } else {
-                setLeads(data.leads || []);
-                setChatTitle(data.chatTitle || chatUsername);
-                if (data.timedOut) {
-                    console.warn(`[Scout] Scan timed out for ${chatUsername}. Try a smaller limit.`);
-                    // Show a non-blocking toast-style warning in the leads area
-                    setLeads([]);
-                    alert(`⏱ Скан занял слишком долго (>50 сек).\nПопробуй уменьшить лимит до 20–30 сообщений.`);
+                // Fast sync scan for small limits
+                const data = await scanChat(chatUsername, scanLimit, scanKeywords);
+                if (Array.isArray(data)) {
+                    setLeads(data);
+                } else {
+                    setLeads(data.leads || []);
+                    setChatTitle((data as any).chatTitle || chatUsername);
+                    if ((data as any).timedOut) {
+                        alert(`⏱ Скан занял слишком долго (>50 сек).\nПопробуй уменьшить лимит до 20–30 сообщений.`);
+                    }
                 }
             }
         } catch (e: any) {
@@ -199,6 +221,7 @@ const ScoutPage = () => {
             alert(`Scan failed: ${e.response?.data?.error || e.message}`);
         } finally {
             setScanning(false);
+            setScanProgress(null);
         }
     };
 
@@ -442,12 +465,13 @@ const ScoutPage = () => {
                         <span className="text-xs text-muted-foreground">Limit:</span>
                         <input
                             type="number"
-                            className="w-12 text-sm bg-transparent focus:outline-none"
+                            className="w-14 text-sm bg-transparent focus:outline-none"
                             value={scanLimit}
-                            onChange={(e) => setScanLimit(Math.min(Number(e.target.value), 300))}
+                            onChange={(e) => setScanLimit(Math.min(Number(e.target.value), 1000))}
                             min={10}
-                            max={300}
+                            max={1000}
                         />
+
                     </div>
                     <div className="flex items-center gap-1 bg-background border rounded px-2 py-1 w-64">
                         <span className="text-xs text-muted-foreground">Keywords:</span>
@@ -485,6 +509,22 @@ const ScoutPage = () => {
                     </button>
                 </div>
             </div>
+
+            {/* Async Scan Progress Bar */}
+            {scanProgress !== null && (
+                <div className="max-w-3xl mx-auto w-full mb-2 px-1">
+                    <div className="flex justify-between text-xs text-muted-foreground mb-1">
+                        <span>⏳ Сканирование {scanLimit} сообщений...</span>
+                        <span>{scanProgress}%</span>
+                    </div>
+                    <div className="w-full bg-border rounded-full h-1.5">
+                        <div
+                            className="bg-primary h-1.5 rounded-full transition-all duration-500"
+                            style={{ width: `${scanProgress}%` }}
+                        />
+                    </div>
+                </div>
+            )}
 
             {/* Parse All Progress & Results */}
             {(parseAllProgress || showAllLeads) && (
