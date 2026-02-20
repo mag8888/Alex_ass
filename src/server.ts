@@ -929,28 +929,48 @@ fastify.post('/scout/reply-chat', async (req, reply) => {
 fastify.post('/scout/import', async (req, reply) => {
     const { user, profile, draft, sourceChatId } = req.body as { user: any, profile: any, draft: string, sourceChatId: number };
 
-    // 1. Ensure User & Dialogue
-    const { user: dbUser, dialogue } = await ensureUserAndDialogue(
-        user.username || user.id, // ID as fallback
-        user.firstName || 'Unknown',
-        user.accessHash,
-        'SCOUT'
-    );
+    try {
+        // 1. Ensure User & Dialogue
+        const { user: dbUser, dialogue } = await ensureUserAndDialogue(
+            user.username || user.id,
+            user.firstName || 'Unknown',
+            user.accessHash,
+            'SCOUT'
+        );
 
-    // 2. Update Profile & Source
-    await prisma.user.update({
-        where: { id: dbUser.id },
-        data: {
-            ...profile,
-            sourceChatId: sourceChatId
+        // 2. Strip system/schema fields that can't be directly written via update
+        const allowedProfileFields = [
+            'city', 'activity', 'businessCard', 'bestClients', 'requests',
+            'hobbies', 'currentIncome', 'desiredIncome', 'networkingGoal',
+            'firstName', 'lastName', 'username', 'bio', 'tags', 'facts',
+            'status', 'profileStatus'
+        ];
+        const safeProfile: Record<string, any> = {};
+        for (const key of allowedProfileFields) {
+            if (profile && profile[key] !== undefined) {
+                safeProfile[key] = profile[key];
+            }
         }
-    });
 
-    // 3. Create Draft Message
-    await createDraftMessage(dialogue.id, draft);
+        // 3. Update Profile & Source
+        await prisma.user.update({
+            where: { id: dbUser.id },
+            data: {
+                ...safeProfile,
+                sourceChatId: sourceChatId || null
+            }
+        });
 
-    return { success: true, userId: dbUser.id };
+        // 4. Create Draft Message
+        await createDraftMessage(dialogue.id, draft);
+
+        return { success: true, userId: dbUser.id };
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: `Import failed: ${e.message}` });
+    }
 });
+
 
 fastify.get('/rules', async (req, reply) => {
     const { userId } = req.query as { userId?: string };
