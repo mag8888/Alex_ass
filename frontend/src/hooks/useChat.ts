@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import type { Dialogue } from '../types';
 import { DialogueSource } from '../types';
 
@@ -9,6 +9,9 @@ export const useChat = () => {
     const [search, setSearch] = useState('');
     const [loading, setLoading] = useState(false);
     const [showRejected, setShowRejected] = useState(false);
+    const [newDialogueIds, setNewDialogueIds] = useState<Set<number>>(new Set());
+    const seenIds = React.useRef<Set<number>>(new Set());
+
 
     // Fetch Dialogues
     const loadDialogues = useCallback(async (isBackground = false) => {
@@ -18,12 +21,25 @@ export const useChat = () => {
             if (!res.ok) throw new Error('Failed to fetch dialogues');
             const data: Dialogue[] = await res.json();
             setDialogues(data);
+
+            // Detect new dialogues that weren't seen before
+            if (isBackground && seenIds.current.size > 0) {
+                const incoming = new Set(data.map(d => d.id));
+                const fresh: number[] = [];
+                incoming.forEach(id => { if (!seenIds.current.has(id)) fresh.push(id); });
+                if (fresh.length > 0) {
+                    setNewDialogueIds(prev => new Set([...prev, ...fresh]));
+                }
+            }
+            // Update seen ids
+            data.forEach(d => seenIds.current.add(d.id));
         } catch (err) {
             console.error(err);
         } finally {
             if (!isBackground) setLoading(false);
         }
     }, []);
+
 
     // Initial Load & Polling for List
     useEffect(() => {
@@ -77,6 +93,9 @@ export const useChat = () => {
 
     const selectChat = async (id: number) => {
         console.log('[DEBUG] selectChat called for ID:', id);
+        // Clear new-dialogue highlight when user opens it
+        setNewDialogueIds(prev => { const next = new Set(prev); next.delete(id); return next; });
+
         // 1. Optimistic update (show partial data immediately)
         const partial = dialogues.find(d => d.id === id);
         if (partial) {
@@ -220,6 +239,7 @@ export const useChat = () => {
     return {
         dialogues: filteredDialogues,
         currentDialogue,
+        newDialogueIds,
         selectChat,
         loadDialogues,
         syncChats,

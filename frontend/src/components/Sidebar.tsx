@@ -29,6 +29,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
     const {
         dialogues,
         currentDialogue,
+        newDialogueIds,
         selectChat,
         search,
         setSearch,
@@ -39,6 +40,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
         setShowRejected,
         loading
     } = chatState;
+
 
     // Load Scout Chats when tab is active
     useEffect(() => {
@@ -184,6 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                     // Existing Chat List
                     dialogues.map((d) => {
                         const isActive = currentDialogue?.id === d.id;
+                        const isNew = newDialogueIds.has(d.id);
                         const isScout = d.source === DialogueSource.SCOUT || d.user.sourceChatId;
                         const lastMsg = d.messages?.[0];
 
@@ -191,13 +194,17 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                             <div
                                 key={d.id}
                                 onClick={() => { navigate('/'); selectChat(d.id); }}
-                                className={`p-3 border-b border-border/50 cursor-pointer transition-colors hover:bg-muted/50 ${isActive && location.pathname === '/' ? 'bg-muted border-l-4 border-l-primary' : ''
+                                className={`p-3 border-b border-border/50 cursor-pointer transition-colors hover:bg-muted/50 ${isActive && location.pathname === '/' ? 'bg-muted border-l-4 border-l-primary' :
+                                        isNew ? 'bg-green-500/8 border-l-4 border-l-green-500 animate-pulse-once' : ''
                                     }`}
                             >
                                 <div className="flex justify-between items-start mb-1">
-                                    <div className="font-medium text-sm truncate pr-2">
+                                    <div className="font-medium text-sm truncate pr-2 flex items-center gap-1">
                                         {d.user.firstName || 'User'} {d.user.lastName}
                                         {d.user.username && <span className="text-muted-foreground text-xs ml-1">@{d.user.username}</span>}
+                                        {isNew && (
+                                            <span className="ml-1 text-[10px] font-bold bg-green-500 text-white px-1.5 py-0.5 rounded-full animate-bounce">NEW</span>
+                                        )}
                                     </div>
                                 </div>
 
