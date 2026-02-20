@@ -239,14 +239,30 @@ const ScoutPage = () => {
 
             for (let i = 0; i < chats.length; i++) {
                 const chat = chats[i];
+                const chatIdentifier = chat.username || chat.link;
                 const chatName = chat.title || chat.username || chat.link;
                 setParseAllProgress({ current: i + 1, total: chats.length, chatName });
 
                 try {
-                    const data = await scanChat(chat.username || chat.link, scanLimit, scanKeywords);
-                    const leads = (Array.isArray(data) ? data : data.leads) || [];
+                    let leads: Lead[] = [];
+
+                    if (scanLimit > 100) {
+                        // Async mode for large limits
+                        const { jobId } = await startScanJob(chatIdentifier, scanLimit, scanKeywords);
+                        while (true) {
+                            await new Promise(r => setTimeout(r, 2500));
+                            const job = await pollScanJob(jobId);
+                            if (job.status === 'done') { leads = job.leads || []; break; }
+                            if (job.status === 'error') { console.warn(`[ParseAll] Job error for ${chatName}:`, job.error); break; }
+                        }
+                    } else {
+                        // Fast sync for small limits
+                        const data = await scanChat(chatIdentifier, scanLimit, scanKeywords);
+                        leads = (Array.isArray(data) ? data : data.leads) || [];
+                    }
+
                     aggregated.push(...leads);
-                    setAllLeads([...aggregated]); // Update incrementally
+                    setAllLeads([...aggregated]);
                 } catch (e) {
                     console.warn(`[ParseAll] Failed to scan ${chatName}:`, e);
                 }
