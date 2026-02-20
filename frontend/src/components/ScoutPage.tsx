@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats } from '../api';
+import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats, addIgnoreTrigger } from '../api';
 import { Play, Loader2, Sparkles, Save, ShieldAlert, Send, MessageSquare, RefreshCw, History as HistoryIcon, X } from 'lucide-react';
 
 // --- Status Helpers ---
@@ -514,6 +514,28 @@ const ScoutPage = () => {
                                     title="Пропустить этот лид"
                                 >
                                     <X className="w-3.5 h-3.5" /> Пропустить
+                                </button>
+                                <button
+                                    onClick={async () => {
+                                        const uname = lead.sender.username;
+                                        if (!uname) {
+                                            alert('У пользователя нет username — нельзя добавить в серый список.');
+                                            return;
+                                        }
+                                        try {
+                                            await addIgnoreTrigger(uname, 'USERNAME');
+                                            // Remove ALL messages from this user from the view
+                                            const filter = (l: Lead) => l.sender.username !== uname;
+                                            showAllLeads ? setAllLeads(prev => prev.filter(filter)) : setLeads(prev => prev.filter(filter));
+                                        } catch (e: any) {
+                                            console.error(e);
+                                            alert(`Не удалось добавить в серый список: ${e.response?.data?.error || e.message}`);
+                                        }
+                                    }}
+                                    className="flex items-center gap-1 px-3 py-2 rounded border border-border text-orange-500 hover:bg-orange-500/10 hover:border-orange-500/30 transition-colors text-sm"
+                                    title="Добавить в серый список — навсегда скрыть сообщения этого пользователя"
+                                >
+                                    🔇 Серый список
                                 </button>
                                 <button
                                     onClick={() => handleAnalyze(idx)}

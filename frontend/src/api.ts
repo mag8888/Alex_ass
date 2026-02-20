@@ -123,3 +123,11 @@ export const updateUserStatus = async (telegramId: string, status: string) => {
     return response.data;
 };
 
+// --- Ignore Triggers (Grey List) ---
+
+export const addIgnoreTrigger = async (keyword: string, type: 'USERNAME' | 'KEYWORD' = 'USERNAME') => {
+    const response = await api.post('/triggers', { keyword, type });
+    return response.data;
+};
+
+
