@@ -503,7 +503,18 @@ const ScoutPage = () => {
 
                         {/* Actions / Analysis */}
                         {!lead.analysis ? (
-                            <div className="flex justify-end">
+                            <div className="flex justify-end gap-2">
+                                <button
+                                    onClick={() => {
+                                        const list = showAllLeads ? [...allLeads] : [...leads];
+                                        list.splice(idx, 1);
+                                        showAllLeads ? setAllLeads(list) : setLeads(list);
+                                    }}
+                                    className="flex items-center gap-1 px-3 py-2 rounded border border-border text-muted-foreground hover:bg-muted hover:text-foreground transition-colors text-sm"
+                                    title="Пропустить этот лид"
+                                >
+                                    <X className="w-3.5 h-3.5" /> Пропустить
+                                </button>
                                 <button
                                     onClick={() => handleAnalyze(idx)}
                                     disabled={lead.isAnalyzing}
