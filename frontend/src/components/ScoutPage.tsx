@@ -764,17 +764,19 @@ const ScoutPage = () => {
 
                                             <button
                                                 onClick={() => {
-                                                    const newLeads = [...leads];
-                                                    const analysis = newLeads[idx].analysis!;
-                                                    // Re-run generation with current name and scenarios
-                                                    const generateText = (ids: string[]) => {
-                                                        const safeIds = Array.isArray(ids) ? ids : [];
-                                                        let txt = safeIds.map(id => SCENARIO_OPTIONS.find(o => o.id === id)?.text({ ...analysis.profile, firstName: analysis.customName }) || '').join(' ');
-                                                        if (analysis.customContext) txt += ` ${analysis.customContext}`;
-                                                        return txt;
-                                                    };
-                                                    analysis.draft = generateText(analysis.selectedScenarios || []);
-                                                    setLeads(newLeads);
+                                                    setActiveLeads((prev: Lead[]) => {
+                                                        const n = [...prev];
+                                                        const analysis = n[idx]?.analysis;
+                                                        if (!analysis) return n;
+                                                        const generateText = (ids: string[]) => {
+                                                            const safeIds = Array.isArray(ids) ? ids : [];
+                                                            let txt = safeIds.map(id => SCENARIO_OPTIONS.find(o => o.id === id)?.text({ ...analysis.profile, firstName: analysis.customName }) || '').join(' ');
+                                                            if (analysis.customContext) txt += ` ${analysis.customContext}`;
+                                                            return txt;
+                                                        };
+                                                        n[idx] = { ...n[idx], analysis: { ...analysis, draft: generateText(analysis.selectedScenarios || []) } };
+                                                        return n;
+                                                    });
                                                 }}
                                                 className="text-xs text-purple-600 hover:text-purple-700 flex items-center gap-1"
                                             >
@@ -792,32 +794,30 @@ const ScoutPage = () => {
                                                     className="rounded border-gray-300 text-purple-600 focus:ring-purple-500"
                                                     checked={lead.analysis?.selectedScenarios?.includes(option.id) || false}
                                                     onChange={(e) => {
-                                                        const newLeads = [...leads];
-                                                        const analysis = newLeads[idx].analysis!;
-                                                        const Scenarios = analysis.selectedScenarios || [];
-
-                                                        let newScenarios;
-                                                        if (e.target.checked) {
-                                                            newScenarios = [...Scenarios, option.id];
-                                                            newScenarios.sort((a, b) => {
-                                                                return SCENARIO_OPTIONS.findIndex(o => o.id === a) - SCENARIO_OPTIONS.findIndex(o => o.id === b);
-                                                            });
-                                                        } else {
-                                                            newScenarios = Scenarios.filter(id => id !== option.id);
-                                                        }
-
-                                                        analysis.selectedScenarios = newScenarios;
-
-                                                        // Regenerate Draft Loop
-                                                        const generateText = (ids: string[]) => {
-                                                            const safeIds = Array.isArray(ids) ? ids : [];
-                                                            let txt = safeIds.map(id => SCENARIO_OPTIONS.find(o => o.id === id)?.text({ ...analysis.profile, firstName: analysis.customName }) || '').join(' ');
-                                                            if (analysis.customContext) txt += ` ${analysis.customContext}`;
-                                                            return txt;
-                                                        };
-                                                        analysis.draft = generateText(newScenarios);
-
-                                                        setLeads(newLeads);
+                                                        const checked = e.target.checked;
+                                                        const optionId = option.id;
+                                                        setActiveLeads((prev: Lead[]) => {
+                                                            const n = [...prev];
+                                                            const analysis = n[idx]?.analysis;
+                                                            if (!analysis) return n;
+                                                            const current = analysis.selectedScenarios || [];
+                                                            let newScenarios: string[];
+                                                            if (checked) {
+                                                                newScenarios = [...current, optionId].sort((a, b) =>
+                                                                    SCENARIO_OPTIONS.findIndex(o => o.id === a) - SCENARIO_OPTIONS.findIndex(o => o.id === b)
+                                                                );
+                                                            } else {
+                                                                newScenarios = current.filter(id => id !== optionId);
+                                                            }
+                                                            const generateText = (ids: string[]) => {
+                                                                const safeIds = Array.isArray(ids) ? ids : [];
+                                                                let txt = safeIds.map(id => SCENARIO_OPTIONS.find(o => o.id === id)?.text({ ...analysis.profile, firstName: analysis.customName }) || '').join(' ');
+                                                                if (analysis.customContext) txt += ` ${analysis.customContext}`;
+                                                                return txt;
+                                                            };
+                                                            n[idx] = { ...n[idx], analysis: { ...analysis, selectedScenarios: newScenarios, draft: generateText(newScenarios) } };
+                                                            return n;
+                                                        });
                                                     }}
                                                 />
                                                 {option.label}
@@ -833,23 +833,20 @@ const ScoutPage = () => {
                                             placeholder="Вставьте свой текст здесь (добавится в конец)..."
                                             value={(lead.analysis as any).customContext || ''}
                                             onChange={(e) => {
-                                                const newLeads = [...leads];
-                                                if (newLeads[idx].analysis) {
-                                                    (newLeads[idx].analysis as any).customContext = e.target.value;
-                                                    // Trigger regeneration? Or wait for Manual Regenerate?
-                                                    // User might want to type and see results. Let's auto-update draft.
-
-                                                    const analysis = newLeads[idx].analysis!;
+                                                const ctxVal = e.target.value;
+                                                setActiveLeads((prev: Lead[]) => {
+                                                    const n = [...prev];
+                                                    const analysis = n[idx]?.analysis;
+                                                    if (!analysis) return n;
                                                     const generateText = (ids: string[]) => {
                                                         const safeIds = Array.isArray(ids) ? ids : [];
                                                         let txt = safeIds.map(id => SCENARIO_OPTIONS.find(o => o.id === id)?.text({ ...analysis.profile, firstName: analysis.customName }) || '').join(' ');
-                                                        txt += ` ${e.target.value}`; // Use new value immediately
+                                                        txt += ` ${ctxVal}`;
                                                         return txt;
                                                     };
-                                                    analysis.draft = generateText(analysis.selectedScenarios || []);
-
-                                                    setLeads(newLeads);
-                                                }
+                                                    n[idx] = { ...n[idx], analysis: { ...analysis, customContext: ctxVal, draft: generateText(analysis.selectedScenarios || []) } };
+                                                    return n;
+                                                });
                                             }}
                                         />
                                     </div>
@@ -858,11 +855,14 @@ const ScoutPage = () => {
                                         className="w-full bg-background border border-purple-500/30 rounded p-2 text-sm h-24 focus:outline-none focus:ring-1 focus:ring-purple-500 font-sans"
                                         value={lead.analysis.draft}
                                         onChange={(e) => {
-                                            const newLeads = [...leads];
-                                            if (newLeads[idx].analysis) {
-                                                newLeads[idx].analysis!.draft = e.target.value;
-                                                setLeads(newLeads);
-                                            }
+                                            const val = e.target.value;
+                                            setActiveLeads((prev: Lead[]) => {
+                                                const n = [...prev];
+                                                if (n[idx]?.analysis) {
+                                                    n[idx] = { ...n[idx], analysis: { ...n[idx].analysis!, draft: val } };
+                                                }
+                                                return n;
+                                            });
                                         }}
                                     />
 
