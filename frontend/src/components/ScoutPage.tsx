@@ -185,8 +185,14 @@ const ScoutPage = () => {
             if (Array.isArray(data)) {
                 setLeads(data);
             } else {
-                setLeads(data.leads);
+                setLeads(data.leads || []);
                 setChatTitle(data.chatTitle || chatUsername);
+                if (data.timedOut) {
+                    console.warn(`[Scout] Scan timed out for ${chatUsername}. Try a smaller limit.`);
+                    // Show a non-blocking toast-style warning in the leads area
+                    setLeads([]);
+                    alert(`⏱ Скан занял слишком долго (>50 сек).\nПопробуй уменьшить лимит до 20–30 сообщений.`);
+                }
             }
         } catch (e: any) {
             console.error(e);

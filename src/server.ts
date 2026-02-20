@@ -802,9 +802,25 @@ fastify.get('/scout/chats/:username/leads', async (req, reply) => {
         }
 
         // scanChatForLeads handles the logic
-        // scanChatForLeads handles the logic
-        const result = await scanChatForLeads(username, scanLimit, customKeywords, accessHash);
-        return result;
+        // Wrap in a 50s timeout so Railway (60s limit) doesn't kill the connection
+        const TIMEOUT_MS = 50_000;
+        const timeoutPromise = new Promise<never>((_, reject) =>
+            setTimeout(() => reject(new Error('SCAN_TIMEOUT')), TIMEOUT_MS)
+        );
+
+        try {
+            const result = await Promise.race([
+                scanChatForLeads(username, scanLimit, customKeywords, accessHash),
+                timeoutPromise
+            ]);
+            return result;
+        } catch (timeoutErr: any) {
+            if (timeoutErr.message === 'SCAN_TIMEOUT') {
+                req.log.warn(`[Scout] Scan of ${username} timed out after ${TIMEOUT_MS / 1000}s`);
+                return reply.code(200).send({ leads: [], chatTitle: username, timedOut: true, error: 'Scan took too long. Try a smaller limit.' });
+            }
+            throw timeoutErr; // re-throw for the outer catch
+        }
     } catch (e: any) {
         req.log.error(e);
         return reply.code(500).send({ error: `Scan failed: ${e.message}` });
