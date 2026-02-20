@@ -186,7 +186,8 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                     // Existing Chat List
                     dialogues.map((d) => {
                         const isActive = currentDialogue?.id === d.id;
-                        const isNew = newDialogueIds.has(d.id);
+                        const hasNoMessages = !d.messages || d.messages.length === 0;
+                        const isNew = newDialogueIds.has(d.id) || hasNoMessages;
                         const isScout = d.source === DialogueSource.SCOUT || d.user.sourceChatId;
                         const lastMsg = d.messages?.[0];
 
@@ -195,7 +196,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                                 key={d.id}
                                 onClick={() => { navigate('/'); selectChat(d.id); }}
                                 className={`p-3 border-b border-border/50 cursor-pointer transition-colors hover:bg-muted/50 ${isActive && location.pathname === '/' ? 'bg-muted border-l-4 border-l-primary' :
-                                        isNew ? 'bg-green-500/8 border-l-4 border-l-green-500 animate-pulse-once' : ''
+                                    isNew ? 'bg-green-500/8 border-l-4 border-l-green-500 animate-pulse-once' : ''
                                     }`}
                             >
                                 <div className="flex justify-between items-start mb-1">
