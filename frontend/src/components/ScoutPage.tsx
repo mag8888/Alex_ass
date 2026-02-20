@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus } from '../api';
+import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats } from '../api';
 import { Play, Loader2, Sparkles, Save, ShieldAlert, Send, MessageSquare, RefreshCw, History as HistoryIcon, X } from 'lucide-react';
 
 // --- Status Helpers ---
@@ -104,6 +104,11 @@ const ScoutPage = () => {
     const [templates, setTemplates] = useLocalStorage<{ id: string, name: string, content: string }[]>('scout_templates', []);
     const [selectedTemplate, setSelectedTemplate] = useState<string>('');
 
+    // Parse All state
+    const [parseAllProgress, setParseAllProgress] = useState<{ current: number; total: number; chatName: string } | null>(null);
+    const [allLeads, setAllLeads] = useState<Lead[]>([]); // Aggregated leads from all chats
+    const [showAllLeads, setShowAllLeads] = useState(false);
+
     useEffect(() => {
         if (username) {
             handleScan(username);
@@ -131,6 +136,42 @@ const ScoutPage = () => {
             alert(`Scan failed: ${e.response?.data?.error || e.message}`);
         } finally {
             setScanning(false);
+        }
+    };
+
+    const handleParseAll = async () => {
+        try {
+            const chats = await getScoutChats();
+            if (!chats || chats.length === 0) {
+                alert('No scout chats found. Add chats in the Scout tab first.');
+                return;
+            }
+
+            const aggregated: Lead[] = [];
+            setShowAllLeads(true);
+            setAllLeads([]);
+
+            for (let i = 0; i < chats.length; i++) {
+                const chat = chats[i];
+                const chatName = chat.title || chat.username || chat.link;
+                setParseAllProgress({ current: i + 1, total: chats.length, chatName });
+
+                try {
+                    const data = await scanChat(chat.username || chat.link, scanLimit, scanKeywords);
+                    const leads = (Array.isArray(data) ? data : data.leads) || [];
+                    aggregated.push(...leads);
+                    setAllLeads([...aggregated]); // Update incrementally
+                } catch (e) {
+                    console.warn(`[ParseAll] Failed to scan ${chatName}:`, e);
+                }
+            }
+
+            setParseAllProgress(null);
+            setChatTitle(`All Chats (${chats.length})`);
+        } catch (e: any) {
+            console.error(e);
+            alert(`Parse All failed: ${e.message}`);
+            setParseAllProgress(null);
         }
     };
 
@@ -357,13 +398,56 @@ const ScoutPage = () => {
                         {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                         {scanning ? 'Scanning...' : 'Rescan'}
                     </button>
+                    <button
+                        onClick={handleParseAll}
+                        disabled={!!parseAllProgress}
+                        className="flex items-center gap-2 bg-primary text-primary-foreground px-4 py-2 rounded hover:bg-primary/90 disabled:opacity-50"
+                        title="Scan all scout chats and collect leads"
+                    >
+                        {parseAllProgress ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>⚡</span>}
+                        {parseAllProgress ? `${parseAllProgress.current}/${parseAllProgress.total}...` : 'Parse All'}
+                    </button>
                 </div>
             </div>
 
-            <div className="space-y-6 max-w-3xl mx-auto w-full">
-                {leads.length === 0 && !scanning && <div className="text-muted-foreground text-center py-10">No relevant leads found in last 50 messages.</div>}
+            {/* Parse All Progress & Results */}
+            {(parseAllProgress || showAllLeads) && (
+                <div className="mb-4 p-4 bg-primary/5 border border-primary/20 rounded-lg max-w-3xl mx-auto w-full">
+                    <div className="flex justify-between items-center mb-2">
+                        <div className="flex items-center gap-2">
+                            <span className="font-semibold text-sm">⚡ Parse All Results</span>
+                            <span className="text-sm text-muted-foreground">({allLeads.length} leads found)</span>
+                        </div>
+                        <div className="flex items-center gap-2">
+                            {parseAllProgress && (
+                                <span className="text-xs text-muted-foreground">Scanning: {parseAllProgress.chatName} ({parseAllProgress.current}/{parseAllProgress.total})</span>
+                            )}
+                            {!parseAllProgress && (
+                                <button
+                                    onClick={() => { setShowAllLeads(false); setAllLeads([]); }}
+                                    className="text-xs text-muted-foreground hover:text-foreground px-2 py-0.5 border border-border rounded"
+                                >Clear</button>
+                            )}
+                        </div>
+                    </div>
+                    {parseAllProgress && (
+                        <div className="w-full bg-border rounded-full h-1.5 mb-2">
+                            <div
+                                className="bg-primary h-1.5 rounded-full transition-all duration-500"
+                                style={{ width: `${(parseAllProgress.current / parseAllProgress.total) * 100}%` }}
+                            />
+                        </div>
+                    )}
+                </div>
+            )}
 
-                {leads.map((lead, idx) => (
+            <div className="space-y-6 max-w-3xl mx-auto w-full">
+                {/* Which leads to show: all-leads mode or single-chat mode */}
+                {(showAllLeads ? allLeads : leads).length === 0 && !scanning && !parseAllProgress && (
+                    <div className="text-muted-foreground text-center py-10">No relevant leads found in last 50 messages.</div>
+                )}
+
+                {(showAllLeads ? allLeads : leads).map((lead, idx) => (
                     <div key={idx} className={`border rounded - lg p - 4 bg - card shadow - sm ${lead.isImported ? 'opacity-50 border-green-500/30' : 'border-border'} `}>
                         {/* Header */}
                         <div className="flex justify-between items-start mb-2">
