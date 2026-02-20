@@ -269,22 +269,40 @@ export async function scanChatForLeads(chatUsername: string, limit: number = 50,
             }
         }
 
+        // Telegram API max per call is 100 — paginate to reach the full limit
+        const BATCH_SIZE = 100;
+        let offsetId = 0;
+        let fetched = 0;
+
+        const fetchBatch = async (peer: any, offset: number): Promise<any[]> => {
+            return await client.getMessages(peer, { limit: Math.min(BATCH_SIZE, limit - fetched), offsetId: offset });
+        };
+
         try {
-            messages = await client.getMessages(inputPeer, { limit: limit });
+            while (fetched < limit) {
+                const batch = await fetchBatch(inputPeer, offsetId);
+                if (!batch || batch.length === 0) break; // No more messages
+                messages.push(...batch);
+                fetched += batch.length;
+                offsetId = batch[batch.length - 1].id; // Next page starts from last ID
+                console.log(`[Scout] Fetched ${fetched}/${limit} messages from ${chatUsername}...`);
+                if (batch.length < BATCH_SIZE) break; // Last page, no more available
+                // Small delay to avoid Telegram flood limits
+                await new Promise(r => setTimeout(r, 300));
+            }
         } catch (e: any) {
             if (e.message && e.message.includes('Could not find the input entity')) {
-                console.log(`[Scout] Entity not found in cache. Fetching dialogs to refresh...`);
-                // Refresh cache by fetching dialogs
-                await client.getDialogs({ limit: 50 }); // Fetch top 50 dialogs 
-
-                // Retry
+                console.log(`[Scout] Entity not found in cache. Refreshing dialogs...`);
+                await client.getDialogs({ limit: 50 });
+                // Retry with resolved entity
                 try {
-                    // Re-evaluate inputPeer if it was just an ID, maybe now it's cached
                     if (typeof inputPeer === 'bigint' || typeof inputPeer === 'number' || typeof inputPeer === 'string') {
                         const resolved = await client.getEntity(inputPeer as any);
                         if (resolved) inputPeer = resolved;
                     }
-                    messages = await client.getMessages(inputPeer, { limit: limit });
+                    // Single batch retry after resolution
+                    const batch = await fetchBatch(inputPeer, 0);
+                    messages.push(...batch);
                 } catch (retryErr) {
                     console.error(`[Scout] Retry failed:`, retryErr);
                     throw new Error(`Could not resolve chat ${chatUsername}. If using an ID, ensure you are joined to the chat or use a Username/Link.`);
@@ -293,6 +311,8 @@ export async function scanChatForLeads(chatUsername: string, limit: number = 50,
                 throw e;
             }
         }
+
+        console.log(`[Scout] Total messages fetched: ${messages.length}`);
 
 
         const leads: any[] = [];
