@@ -262,11 +262,17 @@ const ScoutPage = () => {
         }
     };
 
+    // Helper: active list (single chat or parse-all mode)
+    const activeLeads = showAllLeads ? allLeads : leads;
+    const setActiveLeads = showAllLeads ? setAllLeads : setLeads;
+
     const handleAnalyze = async (index: number) => {
-        const lead = leads[index];
-        const newLeads = [...leads];
-        newLeads[index].isAnalyzing = true;
-        setLeads(newLeads);
+        const lead = activeLeads[index];
+        setActiveLeads((prev: Lead[]) => {
+            const n = [...prev];
+            if (n[index]) n[index] = { ...n[index], isAnalyzing: true };
+            return n;
+        });
 
         try {
             const result = await analyzeLead(lead.text, lead.sender);
@@ -305,26 +311,35 @@ const ScoutPage = () => {
                 channelBox: chatTitle // Pass channel title to scenarios if we want
             };
 
-            newLeads[index].analysis = {
-                ...result,
-                selectedScenarios: defaultScenarios,
-                customName: lead.sender.firstName || 'Friend',
-                draft: generateDraft(defaultScenarios, profileWithPoll),
-                profile: profileWithPoll,
-                // Initialize customContext
-                customContext: ''
-            };
+            setActiveLeads((prev: Lead[]) => {
+                const n = [...prev];
+                if (n[index]) n[index] = {
+                    ...n[index],
+                    analysis: {
+                        ...result,
+                        selectedScenarios: defaultScenarios,
+                        customName: lead.sender.firstName || 'Friend',
+                        draft: generateDraft(defaultScenarios, profileWithPoll),
+                        profile: profileWithPoll,
+                        customContext: ''
+                    }
+                };
+                return n;
+            });
         } catch (e) {
             console.error(e);
             alert('Analysis failed');
         } finally {
-            newLeads[index].isAnalyzing = false;
-            setLeads(newLeads);
+            setActiveLeads((prev: Lead[]) => {
+                const n = [...prev];
+                if (n[index]) n[index] = { ...n[index], isAnalyzing: false };
+                return n;
+            });
         }
     };
 
     const handleImport = async (index: number) => {
-        const lead = leads[index];
+        const lead = activeLeads[index];
         if (!lead.analysis || !username) return;
 
         try {
@@ -340,15 +355,13 @@ const ScoutPage = () => {
                 console.warn('Feedback failed', e);
             }
 
-            // Save context as message?
-            // "Automatically subst receiving channel as inviter"
-            // We can pass `chatTitle` as context if backend supports it.
-            // For now, it's just importing the user.
             await importLead(lead.sender, lead.analysis.profile, lead.analysis.draft, 0);
 
-            const newLeads = [...leads];
-            newLeads[index].isImported = true;
-            setLeads(newLeads);
+            setActiveLeads((prev: Lead[]) => {
+                const n = [...prev];
+                if (n[index]) n[index] = { ...n[index], isImported: true };
+                return n;
+            });
         } catch (e) {
             console.error(e);
             alert('Import failed');
