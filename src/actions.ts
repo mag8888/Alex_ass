@@ -20,11 +20,12 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
                 telegramId: username,
                 username: username,
                 firstName: name,
-                status: 'LEAD',
+                status: 'NEW',
                 accessHash: accessHash || null
             }
         });
         console.log(`[DB] Created new user: ${username}`);
+
     } else {
         // Update info if changed
         const dataToUpdate: any = {};

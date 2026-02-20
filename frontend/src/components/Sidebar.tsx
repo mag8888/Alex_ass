@@ -186,8 +186,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                     // Existing Chat List
                     dialogues.map((d) => {
                         const isActive = currentDialogue?.id === d.id;
-                        const hasNoMessages = !d.messages || d.messages.length === 0;
-                        const isNew = newDialogueIds.has(d.id) || hasNoMessages;
+                        const isNew = newDialogueIds.has(d.id) || d.user.status === 'NEW';
                         const isScout = d.source === DialogueSource.SCOUT || d.user.sourceChatId;
                         const lastMsg = d.messages?.[0];
 
