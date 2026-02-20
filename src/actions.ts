@@ -64,18 +64,34 @@ export async function saveMessageToDb(dialogueId: number, sender: MessageSender,
     try {
         const [msg] = await prisma.$transaction([
             prisma.message.create({
-                data: {
-                    dialogueId,
-                    sender,
-                    text,
-                    status
-                }
+                data: { dialogueId, sender, text, status }
             }),
             prisma.dialogue.update({
                 where: { id: dialogueId },
                 data: { updatedAt: new Date() }
             })
         ]);
+
+        // Auto-upgrade user status to LEAD on their first incoming message
+        if (sender === 'USER') {
+            const msgCount = await prisma.message.count({
+                where: { dialogueId, sender: 'USER' }
+            });
+            if (msgCount === 1) {
+                // This is the first user message — upgrade to LEAD
+                const dialogue = await prisma.dialogue.findUnique({
+                    where: { id: dialogueId },
+                    include: { user: true }
+                });
+                if (dialogue?.user && dialogue.user.status !== 'LEAD' && dialogue.user.status !== 'REJECTED') {
+                    await prisma.user.update({
+                        where: { id: dialogue.user.id },
+                        data: { status: 'LEAD' }
+                    });
+                    console.log(`[DB] Auto-upgraded ${dialogue.user.username} to LEAD on first message`);
+                }
+            }
+        }
 
         console.log(`[DB] Saved ${sender} message: "${text.substring(0, 20)}..."`);
         return msg;

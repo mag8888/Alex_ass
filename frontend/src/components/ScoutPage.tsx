@@ -420,19 +420,19 @@ const ScoutPage = () => {
 
     // Helper to apply a template
     const applyTemplate = (index: number, templateId: string) => {
-        const newLeads = [...leads];
         const template = templates.find(t => t.id === templateId);
-        if (!template || !newLeads[index].analysis) return;
-
-        const analysis = newLeads[index].analysis!;
-        // Substitute variables
-        let content = template.content;
-        content = content.replace(/{name}/g, analysis.customName || 'Friend');
-        content = content.replace(/{channel}/g, chatTitle || 'Chat');
-
-        analysis.draft = content;
-        setLeads(newLeads);
-        setSelectedTemplate(''); // Reset dropdown
+        if (!template) return;
+        setActiveLeads((prev: Lead[]) => {
+            const n = [...prev];
+            const analysis = n[index]?.analysis;
+            if (!analysis) return n;
+            let content = template.content;
+            content = content.replace(/{name}/g, analysis.customName || 'Friend');
+            content = content.replace(/{channel}/g, chatTitle || 'Chat');
+            n[index] = { ...n[index], analysis: { ...analysis, draft: content } };
+            return n;
+        });
+        setSelectedTemplate('');
     };
 
     const saveAsTemplate = (content: string) => {
@@ -733,11 +733,14 @@ const ScoutPage = () => {
                                         className="w-full bg-background border border-border rounded p-2 text-sm focus:outline-none focus:ring-1 focus:ring-purple-500"
                                         value={lead.analysis.customName || ''}
                                         onChange={(e) => {
-                                            const newLeads = [...leads];
-                                            if (newLeads[idx].analysis) {
-                                                newLeads[idx].analysis!.customName = e.target.value;
-                                                setLeads(newLeads);
-                                            }
+                                            const val = e.target.value;
+                                            setActiveLeads((prev: Lead[]) => {
+                                                const n = [...prev];
+                                                if (n[idx]?.analysis) {
+                                                    n[idx] = { ...n[idx], analysis: { ...n[idx].analysis!, customName: val } };
+                                                }
+                                                return n;
+                                            });
                                         }}
                                         placeholder="Name"
                                     />
