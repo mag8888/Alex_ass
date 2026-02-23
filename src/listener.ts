@@ -67,7 +67,20 @@ export async function startListener(page: any) { // 'page' arg kept for compatib
 
         await saveMessageToDb(dialogue.id, 'USER', text, 'RECEIVED');
 
-        // 2. Generate AI Reply (Draft)
+        // Forward to @roman_arctur if this user has an existing dialogue (not first-ever message)
+        try {
+            const priorCount = await prisma.message.count({ where: { dialogueId: dialogue.id } });
+            if (priorCount > 1) {
+                // There were already messages — this is a reply in an ongoing conversation
+                const fwdText = `📩 Ответ от @${username}:\n${text}`;
+                await client.sendMessage('roman_arctur', { message: fwdText });
+                console.log(`[Listener] Forwarded reply from ${username} to @roman_arctur`);
+            }
+        } catch (fwdErr) {
+            console.error('[Listener] Failed to forward message to roman_arctur:', fwdErr);
+        }
+
+
         // Fetch history
         const recentMessages = await prisma.message.findMany({
             where: { dialogueId: dialogue.id },

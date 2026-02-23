@@ -17,7 +17,7 @@ model User {
   lastName  String?
   accessHash String? // For users without username (by ID)
   bio       String?
-  status    UserStatus @default(LEAD)
+  status    UserStatus @default(NEW)
   tags      Json?    // Stored as JSON array of strings
   facts     Json?    // Stored as JSON object: { occupation: "...", country: "...", ... }
   createdAt DateTime @default(now())
@@ -75,14 +75,18 @@ model ScanHistory {
 model ScoutLead {
   id          Int      @id @default(autoincrement())
   scannedChatId Int
-  chat        ScannedChat @relation(fields: [scannedChatId], references: [id])
-  
+  chat        ScannedChat @relation(fields: [scannedChatId], references: [id], onDelete: Cascade)
+
+  // Optional link to the dialogue that imported this lead
+  dialogueId  Int?
+  dialogue    Dialogue? @relation(fields: [dialogueId], references: [id], onDelete: SetNull)
+
   senderUsername String?
   senderId       String?  // Telegram ID
   text           String
-  
+
   relevance   LeadRelevance @default(UNKNOWN)
-  
+
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
 }
@@ -98,12 +102,13 @@ model Dialogue {
   userId    Int
   user      User     @relation(fields: [userId], references: [id])
   status    DialogueStatus @default(ACTIVE)
-  stage     DialogueStage  @default(DISCOVERY) // Track conversation stage
+  stage     DialogueStage  @default(DISCOVERY)
   source    DialogueSource @default(INBOUND)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  messages  Message[]
+  messages   Message[]
+  scoutLeads ScoutLead[]
 }
 
 model Message {
@@ -161,6 +166,7 @@ enum CandidateStatus {
 
 enum UserStatus {
   NEW
+  CHAT
   LEAD
   QUALIFIED
   REJECTED

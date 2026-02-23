@@ -794,7 +794,7 @@ fastify.post('/scout/scan/start', async (req, reply) => {
     const { username, limit, keywords } = req.body as { username: string; limit?: number; keywords?: string };
     if (!username) return reply.code(400).send({ error: 'username required' });
 
-    const scanLimit = Math.min(limit || 50, 1000);
+    const scanLimit = Math.min(limit || 50, 3000); // allow up to 3000
     const customKeywords = keywords ? keywords.split(',').map(k => k.trim()).filter(k => k) : undefined;
     const jobId = `${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -807,26 +807,52 @@ fastify.post('/scout/scan/start', async (req, reply) => {
             const accessHash = await resolveAccessHash(username);
             job.progress = 10;
 
-            // If large scan, stream in batches to show progress
-            const BATCH = 100;
-            const batches = Math.ceil(scanLimit / BATCH);
-            const allLeads: any[] = [];
+            const result = await scanChatForLeads(username, scanLimit, customKeywords, accessHash);
+            const allLeads: any[] = Array.isArray(result) ? result : (result.leads || []);
+            job.chatTitle = Array.isArray(result) ? username : (result.chatTitle || username);
+            job.progress = 90;
 
-            for (let i = 0; i < batches; i++) {
-                const batchLimit = Math.min(BATCH, scanLimit - i * BATCH);
-                // We'll do the full scan but report progress based on batch index
-                // (scanChatForLeads doesn't support pagination, so we do one big scan)
-                if (i === 0) {
-                    const result = await scanChatForLeads(username, scanLimit, customKeywords, accessHash);
-                    if (Array.isArray(result)) {
-                        allLeads.push(...result);
-                    } else {
-                        allLeads.push(...(result.leads || []));
-                        job.chatTitle = result.chatTitle || username;
-                    }
-                    job.progress = 90;
-                    break; // single call returns all results
+            // Persist leads to DB (ScoutLead table) so they survive restarts
+            try {
+                // Find or create ScannedChat record
+                let scannedChat = await prisma.scannedChat.findFirst({
+                    where: { OR: [{ username }, { link: { contains: username } }] }
+                });
+                if (!scannedChat) {
+                    scannedChat = await prisma.scannedChat.create({
+                        data: { username, title: job.chatTitle, link: username, accessHash }
+                    });
+                } else if (job.chatTitle && job.chatTitle !== username) {
+                    await prisma.scannedChat.update({ where: { id: scannedChat.id }, data: { title: job.chatTitle } });
                 }
+
+                // Save each lead as a ScoutLead (skip duplicates by senderUsername)
+                const existingUsernames = new Set(
+                    (await prisma.scoutLead.findMany({
+                        where: { scannedChatId: scannedChat.id },
+                        select: { senderUsername: true }
+                    })).map(l => l.senderUsername)
+                );
+
+                const newLeads = allLeads.filter(l => l.sender?.username && !existingUsernames.has(l.sender.username));
+                if (newLeads.length > 0) {
+                    await prisma.scoutLead.createMany({
+                        data: newLeads.map(l => ({
+                            scannedChatId: scannedChat!.id,
+                            senderUsername: l.sender?.username,
+                            senderId: l.sender?.id?.toString(),
+                            text: l.message || l.text || ''
+                        }))
+                    });
+                    console.log(`[ScanJob] Saved ${newLeads.length} new ScoutLeads to DB`);
+                }
+
+                await prisma.scannedChat.update({
+                    where: { id: scannedChat.id },
+                    data: { lastLeadsCount: allLeads.length, scannedAt: new Date() }
+                });
+            } catch (dbErr) {
+                console.error('[ScanJob] Failed to persist leads to DB:', dbErr);
             }
 
             job.leads = allLeads;

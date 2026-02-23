@@ -61,6 +61,37 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
     return { user, dialogue };
 }
 
+// Upgrade user status when we SEND them a message: NEW → CHAT, and CHAT → LEAD after 3 outgoing msgs
+export async function upgradeStatusOnSend(dialogueId: number) {
+    try {
+        const dialogue = await prisma.dialogue.findUnique({
+            where: { id: dialogueId },
+            include: { user: true }
+        });
+        if (!dialogue?.user) return;
+        const user = dialogue.user;
+
+        if (user.status === 'NEW') {
+            await prisma.user.update({ where: { id: user.id }, data: { status: 'CHAT' } });
+            console.log(`[DB] ${user.username} NEW → CHAT (first DM sent)`);
+            return;
+        }
+
+        if (user.status === 'CHAT') {
+            // Count outgoing (OPERATOR/SIMULATOR) messages in this dialogue
+            const outCount = await prisma.message.count({
+                where: { dialogueId, sender: { in: ['OPERATOR', 'SIMULATOR'] } }
+            });
+            if (outCount >= 3) {
+                await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
+                console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
+            }
+        }
+    } catch (e) {
+        console.error('[DB] upgradeStatusOnSend error:', e);
+    }
+}
+
 export async function saveMessageToDb(dialogueId: number, sender: MessageSender, text: string, status: MessageStatus = 'SENT') {
     try {
         const [msg] = await prisma.$transaction([
@@ -72,27 +103,6 @@ export async function saveMessageToDb(dialogueId: number, sender: MessageSender,
                 data: { updatedAt: new Date() }
             })
         ]);
-
-        // Auto-upgrade user status to LEAD on their first incoming message
-        if (sender === 'USER') {
-            const msgCount = await prisma.message.count({
-                where: { dialogueId, sender: 'USER' }
-            });
-            if (msgCount === 1) {
-                // This is the first user message — upgrade to LEAD
-                const dialogue = await prisma.dialogue.findUnique({
-                    where: { id: dialogueId },
-                    include: { user: true }
-                });
-                if (dialogue?.user && dialogue.user.status !== 'LEAD' && dialogue.user.status !== 'REJECTED') {
-                    await prisma.user.update({
-                        where: { id: dialogue.user.id },
-                        data: { status: 'LEAD' }
-                    });
-                    console.log(`[DB] Auto-upgraded ${dialogue.user.username} to LEAD on first message`);
-                }
-            }
-        }
 
         console.log(`[DB] Saved ${sender} message: "${text.substring(0, 20)}..."`);
         return msg;
@@ -146,14 +156,14 @@ export async function sendDraftMessage(page: any, messageId: number, customText?
         await client.sendMessage(peer, { message: text });
         console.log(`[Msg] Sent approved message to ${username}`);
 
+        // Status upgrade: NEW→CHAT, CHAT→LEAD on 3rd send
+        const dialogueForMsg = await prisma.message.findUnique({ where: { id: messageId }, select: { dialogueId: true } });
+        if (dialogueForMsg) await upgradeStatusOnSend(dialogueForMsg.dialogueId);
+
         // Update DB Status
         return await prisma.message.update({
             where: { id: messageId },
-            data: {
-                status: 'SENT',
-                createdAt: new Date(),
-                text: text
-            }
+            data: { status: 'SENT', createdAt: new Date(), text: text }
         });
 
     } catch (e: any) {
@@ -205,6 +215,9 @@ export async function sendMessageToUser(userId: number, text: string) {
 
         await client.sendMessage(target, { message: text });
         console.log(`[ACTION] GramJS send successful`);
+
+        // Status upgrade: NEW→CHAT, CHAT→LEAD on 3rd send
+        if (dialogueId) await upgradeStatusOnSend(dialogueId);
 
         return msg;
     } catch (e: any) {
