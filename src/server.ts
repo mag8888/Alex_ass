@@ -218,12 +218,47 @@ fastify.get('/dialogues/:id', async (req, reply) => {
     }
 });
 
+// ── ADMIN RESET ──────────────────────────────────────────────────────────────
+
+// Full wipe: clears all users, dialogues, messages, scout data
+fastify.post('/admin/reset-db', async (req, reply) => {
+    try {
+        // Delete in correct FK order
+        await prisma.message.deleteMany({});
+        await prisma.scoutLead.deleteMany({});
+        await prisma.scanHistory.deleteMany({});
+        await prisma.dialogue.deleteMany({});
+        await prisma.user.deleteMany({});
+        await prisma.scannedChat.deleteMany({});
+        console.log('[ADMIN] Full DB reset done');
+        return { success: true, message: 'All data cleared' };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Soft reset: just set all users back to NEW (keeps dialogues/messages)
+fastify.post('/admin/reset-statuses', async (req, reply) => {
+    try {
+        const result = await prisma.user.updateMany({
+            where: { status: { notIn: ['REJECTED', 'BLOCKED'] } },
+            data: { status: 'NEW' }
+        });
+        console.log(`[ADMIN] Reset ${result.count} users to NEW`);
+        return { success: true, updated: result.count };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ─────────────────────────────────────────────────────────────────────────────
+
 // Update user status (admin action)
 fastify.patch('/users/:telegramId/status', async (req, reply) => {
     const { telegramId } = req.params as { telegramId: string };
     const { status } = req.body as { status: string };
 
-    const validStatuses = ['NEW', 'LEAD', 'QUALIFIED', 'REJECTED', 'MATCHED', 'BLOCKED', 'CUSTOMER'];
+    const validStatuses = ['NEW', 'CHAT', 'LEAD', 'QUALIFIED', 'REJECTED', 'MATCHED', 'BLOCKED', 'CUSTOMER'];
     if (!validStatuses.includes(status)) {
         return reply.code(400).send({ error: `Invalid status. Must be one of: ${validStatuses.join(', ')}` });
     }
