@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useParams } from 'react-router-dom';
-import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats, addIgnoreTrigger, startScanJob, pollScanJob } from '../api';
+import { scanChat, analyzeLead, importLead, api, sendScoutDM, replyInChat, getScanHistory, getScanHistoryEntry, updateUserStatus, getScoutChats, addIgnoreTrigger, startScanJob, pollScanJob, getPersonalChats } from '../api';
 
 import { Play, Loader2, Sparkles, Save, ShieldAlert, Send, MessageSquare, RefreshCw, History as HistoryIcon, X } from 'lucide-react';
 
@@ -277,6 +277,32 @@ const ScoutPage = () => {
         }
     };
 
+    const handleLoadPersonal = async () => {
+        setScanning(true);
+        setLeads([]);
+        setShowAllLeads(false);
+        setChatTitle('Личные диалоги');
+        try {
+            const data = await getPersonalChats(scanLimit || 200);
+            const rawLeads = data.leads || [];
+            // Normalize to Lead shape expected by ScoutPage
+            const normalized = rawLeads.map((l: any) => ({
+                id: 0,
+                text: l.message || '',
+                date: l.date ? Math.floor(new Date(l.date).getTime() / 1000) : Math.floor(Date.now() / 1000),
+                isAdmin: false,
+                sender: l.sender,
+                isPersonal: true,
+            }));
+            setLeads(normalized);
+        } catch (e: any) {
+            console.error(e);
+            alert(`Не удалось загрузить личные диалоги: ${e.response?.data?.error || e.message}`);
+        } finally {
+            setScanning(false);
+        }
+    };
+
     const toggleHistory = async () => {
         if (!showHistory) {
             try {
@@ -513,6 +539,15 @@ const ScoutPage = () => {
                     >
                         {scanning ? <Loader2 className="w-4 h-4 animate-spin" /> : <Play className="w-4 h-4" />}
                         {scanning ? 'Scanning...' : 'Rescan'}
+                    </button>
+                    <button
+                        onClick={handleLoadPersonal}
+                        disabled={scanning}
+                        className="flex items-center gap-2 bg-blue-600 text-white px-4 py-2 rounded hover:bg-blue-700 disabled:opacity-50"
+                        title="Загрузить личные диалоги из Телеграма (папка Личные)"
+                    >
+                        {scanning && chatTitle === 'Личные диалоги' ? <Loader2 className="w-4 h-4 animate-spin" /> : <span>📱</span>}
+                        Личные
                     </button>
                     <button
                         onClick={handleParseAll}

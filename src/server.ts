@@ -715,6 +715,64 @@ fastify.post('/dialogues/:id/regenerate', async (req, reply) => {
 
 // --- Scout Routes ---
 
+// Get personal inbox dialogs as scout leads
+fastify.get('/scout/personal-chats', async (req, reply) => {
+    const client = getClient();
+    if (!client || !client.connected) {
+        return reply.code(503).send({ error: 'Telegram client not connected' });
+    }
+
+    const { limit } = req.query as { limit?: string };
+    const fetchLimit = Math.min(parseInt(limit || '200'), 500);
+
+    try {
+        const dialogs = await client.getDialogs({ limit: fetchLimit });
+
+        const leads: any[] = [];
+
+        for (const d of dialogs) {
+            // Only private user chats (Личные)
+            if (!d.isUser) continue;
+
+            const entity = d.entity as any;
+
+            // Skip bots and self
+            if (entity.bot || entity.self) continue;
+
+            const username = entity.username || null;
+            const firstName = entity.firstName || '';
+            const lastName = entity.lastName || '';
+            const telegramId = entity.id?.toString() || null;
+            const accessHash = entity.accessHash?.toString() || null;
+
+            // Last message from dialog
+            const lastMsg = d.message as any;
+            const lastText = lastMsg?.message || lastMsg?.text || '';
+            const lastDate = lastMsg?.date ? new Date(lastMsg.date * 1000).toISOString() : null;
+
+            leads.push({
+                sender: {
+                    id: telegramId,
+                    username,
+                    firstName,
+                    lastName,
+                    accessHash
+                },
+                message: lastText,
+                date: lastDate,
+                isPersonal: true
+            });
+        }
+
+        console.log(`[Scout] Found ${leads.length} personal dialogs`);
+        return { leads, total: leads.length };
+
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: `Failed to fetch personal chats: ${e.message}` });
+    }
+});
+
 // List monitored chats
 fastify.get('/scout/chats', async (req, reply) => {
     const chats = await prisma.scannedChat.findMany({ orderBy: { scannedAt: 'desc' } });

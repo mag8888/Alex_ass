@@ -147,3 +147,11 @@ export const pollScanJob = async (jobId: string): Promise<{
     const response = await api.get(`/scout/scan/${jobId}`);
     return response.data;
 };
+
+// --- Personal Chats (Личные) ---
+
+export const getPersonalChats = async (limit: number = 200): Promise<{ leads: any[]; total: number }> => {
+    const response = await api.get('/scout/personal-chats', { params: { limit } });
+    return response.data;
+};
+
