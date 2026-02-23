@@ -18,10 +18,14 @@ export async function startListener(page: any) { // 'page' arg kept for compatib
 
     client.addEventHandler(async (event: any) => {
         const message = event.message;
+
+        // Только личные диалоги (не группы, не каналы)
+        if (!message.isPrivate) return;
+
         const sender = await message.getSender();
 
         // Basic filters
-        if (!sender || sender.bot || message.out) return; // Ignore bots and own messages for now (unless we want to track own)
+        if (!sender || sender.bot || message.out) return; // Ignore bots and own messages
 
         const username = sender.username || sender.id.toString();
         const firstName = sender.firstName || "Unknown";
@@ -67,17 +71,17 @@ export async function startListener(page: any) { // 'page' arg kept for compatib
 
         await saveMessageToDb(dialogue.id, 'USER', text, 'RECEIVED');
 
-        // Forward to @roman_arctur if this user has an existing dialogue (not first-ever message)
-        try {
-            const priorCount = await prisma.message.count({ where: { dialogueId: dialogue.id } });
-            if (priorCount > 1) {
-                // There were already messages — this is a reply in an ongoing conversation
-                const fwdText = `📩 Ответ от @${username}:\n${text}`;
+        // Forward to @roman_arctur only if user is a LEAD (or higher status)
+        // A "lead" means there have been multiple touches or the user replied to our first message
+        const LEAD_STATUSES = ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER'];
+        if (LEAD_STATUSES.includes(user.status)) {
+            try {
+                const fwdText = `📩 Лид @${username} (${user.firstName || ''}):\n${text}`;
                 await client.sendMessage('roman_arctur', { message: fwdText });
-                console.log(`[Listener] Forwarded reply from ${username} to @roman_arctur`);
+                console.log(`[Listener] Forwarded message from LEAD ${username} to @roman_arctur`);
+            } catch (fwdErr) {
+                console.error('[Listener] Failed to forward message to roman_arctur:', fwdErr);
             }
-        } catch (fwdErr) {
-            console.error('[Listener] Failed to forward message to roman_arctur:', fwdErr);
         }
 
 
@@ -158,5 +162,5 @@ export async function startListener(page: any) { // 'page' arg kept for compatib
             }
         }
 
-    }, new NewMessage({}));
+    }, new NewMessage({ incoming: true }));
 }
