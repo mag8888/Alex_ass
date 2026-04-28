@@ -1,5 +1,6 @@
 export type UserStatus =
     | 'NEW'
+    | 'CHAT'
     | 'LEAD'
     | 'QUALIFIED'
     | 'REJECTED'
@@ -9,6 +10,7 @@ export type UserStatus =
 
 export const UserStatus = {
     NEW: 'NEW',
+    CHAT: 'CHAT',
     LEAD: 'LEAD',
     QUALIFIED: 'QUALIFIED',
     REJECTED: 'REJECTED',
@@ -69,6 +71,8 @@ export interface User {
         link: string | null;
     };
     networkingGoal?: string;
+    autoReply?: boolean;
+    profileStatus?: 'EMPTY' | 'PARTIAL' | 'COMPLETE';
 }
 
 export interface Message {

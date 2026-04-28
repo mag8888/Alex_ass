@@ -1,16 +1,64 @@
 import { NewMessage } from "telegram/events";
 import { getClient } from "./client";
-import { ensureUserAndDialogue, saveMessageToDb, createDraftMessage } from "./actions";
+import {
+    ensureUserAndDialogue,
+    saveMessageToDb,
+    createDraftMessage,
+    sendMessageToUser,
+    upgradeStatusOnSend,
+} from "./actions";
 import { generateResponse } from "./gpt";
-import { DialogueStage } from '@prisma/client'; // Removed PrismaClient
-import prisma from './db'; // Use shared instance
+import { DialogueStage } from '@prisma/client';
+import prisma from './db';
+import { emitEvent } from './events';
+import { notifyAdmin, getAdminUsername } from './notify';
 
-// const prisma = new PrismaClient(); // Removed
+// ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
+// Refresh every 30s so admin edits propagate without restart, but DB hits stay low.
 
-export async function startListener(page: any) { // 'page' arg kept for compatibility but unused
+interface ContextCache {
+    rulesGlobal: string[];
+    kbItems: { question: string; answer: string }[];
+    triggers: { keyword: string; type: string }[];
+    fetchedAt: number;
+}
+
+let _cache: ContextCache | null = null;
+const CACHE_TTL_MS = 30_000;
+
+async function getContext(): Promise<ContextCache> {
+    const now = Date.now();
+    if (_cache && now - _cache.fetchedAt < CACHE_TTL_MS) return _cache;
+
+    const [rules, kbItems, triggers] = await Promise.all([
+        prisma.rule.findMany({ where: { isGlobal: true, isActive: true } }),
+        prisma.knowledgeItem.findMany(),
+        prisma.ignoreTrigger.findMany(),
+    ]);
+
+    _cache = {
+        rulesGlobal: rules.map(r => r.content),
+        kbItems: kbItems.map(k => ({ question: k.question, answer: k.answer })),
+        triggers: triggers.map(t => ({ keyword: t.keyword, type: t.type })),
+        fetchedAt: now,
+    };
+    return _cache;
+}
+
+export function invalidateContextCache() {
+    _cache = null;
+}
+
+// ── Fallback reply when AI fails ─────────────────────────────────────────────
+
+const FALLBACK_REPLY = 'Спасибо за сообщение! Я скоро вернусь с ответом 🙏';
+
+// ── Main listener ────────────────────────────────────────────────────────────
+
+export async function startListener(_page?: any) {
     const client = getClient();
     if (!client) {
-        console.error("Client not initialized, cannot start listener");
+        console.error("[Listener] Client not initialized, cannot start");
         return;
     }
 
@@ -18,149 +66,144 @@ export async function startListener(page: any) { // 'page' arg kept for compatib
 
     client.addEventHandler(async (event: any) => {
         const message = event.message;
-
-        // Только личные диалоги (не группы, не каналы)
-        if (!message.isPrivate) return;
+        if (!message?.isPrivate) return;
 
         const sender = await message.getSender();
-
-        // Basic filters
-        if (!sender || sender.bot || message.out) return; // Ignore bots and own messages
+        if (!sender || sender.bot || message.out) return;
 
         const username = sender.username || sender.id.toString();
         const firstName = sender.firstName || "Unknown";
         const text = message.text || "";
 
-        console.log(`[Listener] New message from ${username}: ${text}`);
-
-        // --- Ignore Triggers Check ---
-        try {
-            const triggers = await prisma.ignoreTrigger.findMany();
-            const shouldIgnore = triggers.some(t => {
-                if (t.type === 'USERNAME') {
-                    return username.toLowerCase() === t.keyword.toLowerCase();
-                }
-                if (t.type === 'KEYWORD') {
-                    return text.toLowerCase().includes(t.keyword.toLowerCase());
-                }
-                return false;
-            });
-
-            if (shouldIgnore) {
-                console.log(`[Listener] Message ignored by trigger.`);
-                return;
-            }
-        } catch (e) {
-            console.error(`[Listener] Error checking triggers: ${e}`);
+        // Skip messages from admin themselves to avoid feedback loops with notifyAdmin
+        if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
+            console.log(`[Listener] Skipping message from admin @${username}`);
+            return;
         }
 
-        // Mark as read
-        try {
-            await message.markAsRead();
-        } catch (e) {
-            console.error(`[Listener] Failed to mark as read: ${e}`);
+        console.log(`[Listener] New message from @${username}: ${text.substring(0, 80)}`);
+
+        const ctx = await getContext();
+
+        // ── Ignore-trigger filter ────────────────────────────────────────────
+        const shouldIgnore = ctx.triggers.some(t => {
+            if (t.type === 'USERNAME') return username.toLowerCase() === t.keyword.toLowerCase();
+            if (t.type === 'KEYWORD') return text.toLowerCase().includes(t.keyword.toLowerCase());
+            return false;
+        });
+        if (shouldIgnore) {
+            console.log(`[Listener] Ignored by trigger`);
+            return;
         }
 
-        // 1. Save to DB
-        const { user, dialogue } = await ensureUserAndDialogue(username, firstName);
+        // ── Mark as read ────────────────────────────────────────────────────
+        try { await message.markAsRead(); } catch (_) { }
 
-        if (user.status === 'BLOCKED' || user.status === 'REJECTED') { // Added REJECTED check
-            console.log(`[Listener] Ignoring message from BLOCKED/REJECTED user ${username}`);
+        // ── Save inbound message + ensure user/dialogue ─────────────────────
+        const { user, dialogue } = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
+
+        if (user.status === 'BLOCKED' || user.status === 'REJECTED') {
+            console.log(`[Listener] Ignoring ${user.status} user @${username}`);
             return;
         }
 
         await saveMessageToDb(dialogue.id, 'USER', text, 'RECEIVED');
+        emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text });
 
-        // Forward to @roman_arctur only if user is a LEAD (or higher status)
-        // A "lead" means there have been multiple touches or the user replied to our first message
-        const LEAD_STATUSES = ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER'];
-        if (LEAD_STATUSES.includes(user.status)) {
-            try {
-                const fwdText = `📩 Лид @${username} (${user.firstName || ''}):\n${text}`;
-                await client.sendMessage('roman_arctur', { message: fwdText });
-                console.log(`[Listener] Forwarded message from LEAD ${username} to @roman_arctur`);
-            } catch (fwdErr) {
-                console.error('[Listener] Failed to forward message to roman_arctur:', fwdErr);
-            }
+        // ── Notify admin about brand-new conversations once ─────────────────
+        if (!user.notifiedNew) {
+            await notifyAdmin(`👋 Новый человек написал: @${username} (${user.firstName || ''})\n\n«${text.substring(0, 200)}»`);
+            await prisma.user.update({ where: { id: user.id }, data: { notifiedNew: true } });
         }
 
+        // Forward LEAD messages so admin sees the live thread
+        const LEAD_STATUSES = ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER'];
+        if (LEAD_STATUSES.includes(user.status)) {
+            await notifyAdmin(`📩 Лид @${username}: ${text.substring(0, 300)}`, { silent: true });
+        }
 
-        // Fetch history
+        // ── Auto-trigger QUALIFICATION onboarding for new users ─────────────
+        // First inbound message → put dialogue into QUALIFICATION so the bot starts profiling.
+        let currentStage = dialogue.stage as DialogueStage;
+        const messageCount = await prisma.message.count({ where: { dialogueId: dialogue.id } });
+
+        if (messageCount <= 1 && currentStage === 'DISCOVERY') {
+            await prisma.dialogue.update({ where: { id: dialogue.id }, data: { stage: 'QUALIFICATION' } });
+            currentStage = 'QUALIFICATION';
+            console.log(`[Listener] Auto-promoted dialogue ${dialogue.id} to QUALIFICATION (first inbound)`);
+        }
+
+        // ── Per-user rules + history ────────────────────────────────────────
+        const userRules = await prisma.rule.findMany({
+            where: { userId: user.id, isActive: true },
+        });
+        const allRules = [...ctx.rulesGlobal, ...userRules.map(r => r.content)];
+
         const recentMessages = await prisma.message.findMany({
             where: { dialogueId: dialogue.id },
             orderBy: { id: 'desc' },
-            take: 10
+            take: 12,
         });
+        const history = recentMessages.reverse().map(m => ({ sender: m.sender, text: m.text }));
 
-        const history = recentMessages.reverse().map(m => ({
-            sender: m.sender,
-            text: m.text
-        }));
-
-        const currentStage = dialogue.stage as DialogueStage;
-        const currentFacts = (user.facts as any) || {};
-
-        // TODO: Load Templates & KB
-        const templates = {};
-        const kbItems: any[] = [];
-
-        // Fetch Rules
-        const rules = await prisma.rule.findMany({
-            where: {
-                OR: [
-                    { isGlobal: true },
-                    { userId: user.id }
-                ],
-                isActive: true
-            }
-        });
-        const ruleStrings = rules.map(r => r.content);
-
-        console.log(`[GPT] Generating reply for ${username}...`);
+        // ── Generate AI reply ───────────────────────────────────────────────
+        console.log(`[GPT] Generating reply for @${username} (stage=${currentStage}, autoReply=${user.autoReply})`);
         const gptResult = await generateResponse(
             history,
             currentStage,
-            user, // Changed from currentFacts
-            templates,
-            kbItems,
-            undefined, // No custom instructions for auto-reply
-            ruleStrings
+            user,
+            {},
+            ctx.kbItems,
+            undefined,
+            allRules,
         );
 
-        if (gptResult) {
-            console.log(`[GPT] Generated draft: ${gptResult.reply}`);
-            await createDraftMessage(dialogue.id, gptResult.reply);
+        // ── Failure path: fallback + alert ──────────────────────────────────
+        if (!gptResult) {
+            console.error(`[Listener] GPT failed for @${username}, using fallback`);
+            await notifyAdmin(`⚠️ AI ошибка при ответе @${username}. Сообщение: «${text.substring(0, 120)}»`, { rateLimitKey: 'ai-error' });
+            // Still create a draft so the operator can take over
+            await createDraftMessage(dialogue.id, FALLBACK_REPLY);
+            return;
+        }
 
-            // Update Profile Data
-            if (gptResult.extractedProfile && Object.keys(gptResult.extractedProfile).length > 0) {
-                console.log(`[Profile] Updating user ${user.username}:`, gptResult.extractedProfile);
+        console.log(`[GPT] Reply: ${gptResult.reply.substring(0, 100)}`);
 
-                // Strip system fields that cannot be updated directly
-                const { id, createdAt, updatedAt, ...profileData } = gptResult.extractedProfile as any;
-
-                if (Object.keys(profileData).length > 0) {
-                    await prisma.user.update({
-                        where: { id: user.id },
-                        data: profileData
-                    });
-                }
+        // ── Persist extracted profile + stage update ────────────────────────
+        if (gptResult.extractedProfile && Object.keys(gptResult.extractedProfile).length > 0) {
+            const allowed: (keyof typeof gptResult.extractedProfile)[] = [
+                'city', 'activity', 'businessCard', 'bestClients', 'requests',
+                'hobbies', 'currentIncome', 'desiredIncome', 'networkingGoal',
+            ];
+            const safe: Record<string, any> = {};
+            for (const k of allowed) {
+                const v = (gptResult.extractedProfile as any)[k];
+                if (v !== undefined && v !== null && v !== '') safe[k] = v;
             }
-
-            // Update State
-            if (gptResult.nextStage !== currentStage) {
-                await prisma.dialogue.update({
-                    where: { id: dialogue.id },
-                    data: { stage: gptResult.nextStage }
-                });
-            }
-            if (gptResult.newFacts && Object.keys(gptResult.newFacts).length > 0) {
-                const updatedFacts = { ...currentFacts, ...gptResult.newFacts };
-                await prisma.user.update({
-                    where: { id: user.id },
-                    data: { facts: updatedFacts }
-                });
+            if (Object.keys(safe).length > 0) {
+                await prisma.user.update({ where: { id: user.id }, data: safe });
+                console.log(`[Listener] Extracted profile fields: ${Object.keys(safe).join(', ')}`);
             }
         }
 
+        if (gptResult.nextStage && gptResult.nextStage !== currentStage) {
+            await prisma.dialogue.update({ where: { id: dialogue.id }, data: { stage: gptResult.nextStage } });
+            console.log(`[Listener] Stage ${currentStage} → ${gptResult.nextStage}`);
+        }
+
+        // ── Send (auto-mode) or stash as draft ──────────────────────────────
+        if (user.autoReply) {
+            try {
+                await sendMessageToUser(user.id, gptResult.reply);
+                console.log(`[Listener] Auto-sent reply to @${username}`);
+            } catch (sendErr: any) {
+                console.error(`[Listener] Auto-send failed:`, sendErr.message);
+                await notifyAdmin(`⚠️ Не смог автоотправить @${username}: ${sendErr.message}`, { rateLimitKey: 'send-error' });
+                await createDraftMessage(dialogue.id, gptResult.reply);
+            }
+        } else {
+            const draft = await createDraftMessage(dialogue.id, gptResult.reply);
+            emitEvent({ type: 'message:draft', dialogueId: dialogue.id, userId: user.id, text: gptResult.reply });
+        }
     }, new NewMessage({ incoming: true }));
 }
