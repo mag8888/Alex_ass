@@ -1,12 +1,10 @@
 generator client {
   provider = "prisma-client-js"
-  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
   provider = "postgresql"
   url      = env("DATABASE_URL")
-//   extensions = [vector]
 }
 
 model User {
@@ -134,15 +132,6 @@ model Template {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
-
-// model Embedding {
-//   id        Int      @id @default(autoincrement())
-//   userId    Int
-//   user      User     @relation(fields: [userId], references: [id])
-//   vector    Unsupported("vector(384)") // Support for 384-dim vectors (e.g. all-MiniLM-L6-v2)
-//   model     String   // e.g. "xenova/all-MiniLM-L6-v2"
-//   createdAt DateTime @default(now())
-// }
 
 model KnowledgeItem {
   id        Int      @id @default(autoincrement())

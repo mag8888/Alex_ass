@@ -1,9 +1,15 @@
 node_modules
 dist
 .env
+.env.*
 session_data
+session.txt
 *.log
 .DS_Store
 coverage
-debug_error_*.png
+*.png
+debug_*.txt
+debug_*.ts
+debug_*.js
+test_*.ts
 postgres_data

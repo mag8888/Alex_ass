@@ -263,18 +263,6 @@ fastify.post('/dialogues/:id/source', async (req, reply) => {
     }
 });
 
-fastify.post('/debug/migrate-scout', async (req, reply) => {
-    try {
-        const result = await prisma.dialogue.updateMany({
-            where: { source: 'INBOUND' },
-            data: { source: 'SCOUT' }
-        });
-        return { success: true, count: result.count };
-    } catch (e: any) {
-        return reply.code(500).send({ error: e.message });
-    }
-});
-
 fastify.post('/dialogues/:id/archive', async (req, reply) => {
     const { id } = req.params as { id: string };
     try {
