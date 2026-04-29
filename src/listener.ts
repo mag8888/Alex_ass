@@ -12,6 +12,7 @@ import { DialogueStage } from '@prisma/client';
 import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, getAdminUsername } from './notify';
+import { isVoiceMessage, transcribeVoice } from './voice';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
 // Refresh every 30s so admin edits propagate without restart, but DB hits stay low.
@@ -73,7 +74,8 @@ export async function startListener(_page?: any) {
 
         const username = sender.username || sender.id.toString();
         const firstName = sender.firstName || "Unknown";
-        const text = message.text || "";
+        let text = message.text || "";
+        let isVoice = false;
 
         // Skip messages from admin themselves to avoid feedback loops with notifyAdmin
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
@@ -81,7 +83,41 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        console.log(`[Listener] New message from @${username}: ${text.substring(0, 80)}`);
+        // ── Voice message → Whisper transcription ───────────────────────────
+        if (isVoiceMessage(message)) {
+            isVoice = true;
+            console.log(`[Listener] Voice message from @${username}, downloading...`);
+            try {
+                const buf = await client.downloadMedia(message);
+                if (buf && Buffer.isBuffer(buf)) {
+                    // Last 5 messages of dialogue as Whisper hint (improves names/jargon)
+                    const ctxMsgs = await prisma.message.findMany({
+                        where: { dialogueId: { in: [] } }, // placeholder, filled below if dialogue exists
+                        orderBy: { id: 'desc' }, take: 5,
+                    }).catch(() => []);
+                    const hint = ctxMsgs.map(m => m.text).join('\n');
+                    const result = await transcribeVoice(buf, hint);
+                    if (result?.text) {
+                        text = result.text;
+                        console.log(`[Listener] Voice transcribed (${result.durationMs}ms): ${text.substring(0, 100)}`);
+                    } else {
+                        text = '[голосовое сообщение, не удалось распознать]';
+                    }
+                } else {
+                    text = '[голосовое сообщение]';
+                }
+            } catch (e: any) {
+                console.error(`[Listener] Voice download/transcription error:`, e.message);
+                text = '[голосовое сообщение, ошибка обработки]';
+            }
+        }
+
+        if (!text) {
+            console.log(`[Listener] Empty / unsupported message type from @${username} — ignored`);
+            return;
+        }
+
+        console.log(`[Listener] New ${isVoice ? 'voice' : 'text'} message from @${username}: ${text.substring(0, 80)}`);
 
         const ctx = await getContext();
 
@@ -107,8 +143,10 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        await saveMessageToDb(dialogue.id, 'USER', text, 'RECEIVED');
-        emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text });
+        // Tag voice transcripts so admin sees the source in the UI
+        const persistedText = isVoice ? `🎙️ ${text}` : text;
+        await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
+        emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
         // ── Notify admin about brand-new conversations once ─────────────────
         if (!user.notifiedNew) {

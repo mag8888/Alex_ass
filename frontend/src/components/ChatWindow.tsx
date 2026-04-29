@@ -233,13 +233,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                             />
                         );
                     }
+                    const isVoiceTranscript = msg.text.startsWith('🎙️');
                     return (
                         <div key={msg.id} className={`flex ${msg.sender === 'USER' ? 'justify-start' : 'justify-end'}`}>
-                            <div className={`max-w-[70%] rounded-lg p-3 text-sm shadow-sm ${msg.sender === 'USER'
-                                ? 'bg-muted text-foreground'
+                            <div className={`max-w-[80%] md:max-w-[70%] rounded-lg p-3 text-sm shadow-sm ${msg.sender === 'USER'
+                                ? isVoiceTranscript ? 'bg-amber-500/10 text-foreground border border-amber-500/30' : 'bg-muted text-foreground'
                                 : 'bg-primary text-primary-foreground'
                                 }`}>
-                                <div className="whitespace-pre-wrap">{msg.text}</div>
+                                {isVoiceTranscript && (
+                                    <div className="text-[10px] font-semibold uppercase tracking-wider text-amber-600 dark:text-amber-400 mb-1">
+                                        Голосовое (расшифровано)
+                                    </div>
+                                )}
+                                <div className="whitespace-pre-wrap break-words">{isVoiceTranscript ? msg.text.replace(/^🎙️\s*/, '') : msg.text}</div>
                                 <div className="text-[10px] opacity-70 text-right mt-1">
                                     {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
                                 </div>
