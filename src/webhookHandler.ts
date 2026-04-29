@@ -1,7 +1,7 @@
 import crypto from 'crypto';
 import prisma from './db';
 import { invalidateCache, addAiNote, type WMUser, type WMProfile } from './wmClient';
-import { notifyAdmin } from './notify';
+import { notifyAdmin, notifyLeads } from './notify';
 import { ensureUserAndDialogue, sendMessageToUser, createDraftMessage } from './actions';
 import { generateResponse } from './gpt';
 import { applyGender, preferredFirstName } from './gender';

@@ -12,7 +12,7 @@ import { generateResponse } from "./gpt";
 import { DialogueStage } from '@prisma/client';
 import prisma from './db';
 import { emitEvent } from './events';
-import { notifyAdmin, getAdminUsername, buildUserCard } from './notify';
+import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
 import { getUserByTelegramId, addAiNote, addCrmTag, isWMEnabled, WMUser } from './wmClient';
 
@@ -192,17 +192,17 @@ export async function startListener(_page?: any) {
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
-        // ── Notify admin about brand-new conversations once ─────────────────
+        // ── Notify lead channel about brand-new conversations once ─────────
         if (!user.notifiedNew) {
             const card = buildUserCard(user, { title: '👋 Новый человек написал' });
-            await notifyAdmin(`${card}\n\n«${text.substring(0, 200)}»`);
+            await notifyLeads(`${card}\n\n«${text.substring(0, 200)}»`);
             await prisma.user.update({ where: { id: user.id }, data: { notifiedNew: true } });
         }
 
-        // Forward LEAD messages so admin sees the live thread
+        // Forward LEAD messages so the channel sees the live thread
         const LEAD_STATUSES = ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER'];
         if (LEAD_STATUSES.includes(user.status)) {
-            await notifyAdmin(`📩 ${user.firstName || username} ${user.gender === 'FEMALE' ? '♀' : user.gender === 'MALE' ? '♂' : ''} @${username}: ${text.substring(0, 300)}`, { silent: true });
+            await notifyLeads(`📩 ${user.firstName || username} ${user.gender === 'FEMALE' ? '♀' : user.gender === 'MALE' ? '♂' : ''} @${username}: ${text.substring(0, 300)}`, { silent: true });
         }
 
         // ── Auto-trigger QUALIFICATION onboarding for new users ─────────────

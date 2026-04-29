@@ -3,7 +3,7 @@ import { getClient } from "./client";
 import { MessageStatus, MessageSender } from '@prisma/client';
 import prisma from './db';
 import { emitEvent } from './events';
-import { notifyAdmin, buildUserCard } from './notify';
+import { notifyAdmin, notifyLeads, buildUserCard } from './notify';
 import { detectGender } from './gender';
 
 // --- DB Helpers ---
@@ -106,7 +106,7 @@ export async function upgradeStatusOnSend(dialogueId: number) {
                         }
                     } catch (_) { }
                     const card = buildUserCard(updatedUser, { title: '🔥 Новый ЛИД', wm });
-                    await notifyAdmin(card);
+                    await notifyLeads(card);
                     await prisma.user.update({ where: { id: user.id }, data: { notifiedLead: true } });
                 }
             }

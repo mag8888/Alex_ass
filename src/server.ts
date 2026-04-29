@@ -11,7 +11,7 @@ import { sendMessageToUser, sendDraftMessage, scanChatForLeads, ensureUserAndDia
 import { generateResponse, analyzeText } from './gpt';
 import { startListener } from './listener';
 import { sseHandler, emitEvent } from './events';
-import { notifyAdmin } from './notify';
+import { notifyAdmin, notifyLeads } from './notify';
 import { findMatches, connectUsers } from './match';
 import { seedScenarios } from './scenarios';
 import { previewBroadcast, sendBroadcast, backfillGender, findAudience, AudienceFilter } from './broadcast';
@@ -368,7 +368,7 @@ fastify.post('/users/:aId/connect/:bId', async (req, reply) => {
             prisma.user.findUnique({ where: { id: Number(aId) }, select: { telegramId: true, username: true, firstName: true } }),
             prisma.user.findUnique({ where: { id: Number(bId) }, select: { telegramId: true, username: true, firstName: true } }),
         ]);
-        await notifyAdmin(`🤝 Match подготовлен: @${a?.username || aId} ↔ @${b?.username || bId}\nЧерновики готовы в обоих диалогах — проверь и отправь.`);
+        await notifyLeads(`🤝 Match подготовлен: @${a?.username || aId} ↔ @${b?.username || bId}\nЧерновики готовы в обоих диалогах — проверь и отправь.`);
 
         // Push CRM notes to Wave Match for both sides (best-effort, async fire-and-forget)
         if (a?.telegramId && b?.telegramId) {
