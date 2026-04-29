@@ -78,9 +78,11 @@ export async function startListener(_page?: any) {
         let text = message.text || "";
         let isVoice = false;
 
-        // Skip messages from admin themselves to avoid feedback loops with notifyAdmin
+        // Skip messages from admin themselves to avoid feedback loops with notifyAdmin.
+        // Still mark as read so the admin sees the bot is alive (double tick).
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
-            console.log(`[Listener] Skipping message from admin @${username}`);
+            try { await message.markAsRead(); } catch (_) { }
+            console.log(`[Listener] Skipping message from admin @${username} (marked as read)`);
             return;
         }
 
