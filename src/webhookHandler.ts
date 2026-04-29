@@ -7,14 +7,14 @@ import { generateResponse } from './gpt';
 import { emitEvent } from './events';
 
 const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
-// REPLAY_WINDOW expressed in SECONDS (Wave Match team convention).
-// Falls back to legacy MS env, then to 300s (5 min).
-const REPLAY_WINDOW_MS = (() => {
+// REPLAY_WINDOW in SECONDS — matches Wave Match spec §6.2/§10.4 where
+// X-WC-Timestamp is Unix epoch seconds.
+const REPLAY_WINDOW_SEC = (() => {
     const sec = Number(process.env.WAVE_CONNECT_WEBHOOK_REPLAY_WINDOW);
-    if (Number.isFinite(sec) && sec > 0) return sec * 1000;
+    if (Number.isFinite(sec) && sec > 0) return sec;
     const ms = Number(process.env.WM_WEBHOOK_REPLAY_WINDOW_MS);
-    if (Number.isFinite(ms) && ms > 0) return ms;
-    return 5 * 60 * 1000;
+    if (Number.isFinite(ms) && ms > 0) return Math.floor(ms / 1000);
+    return 300; // 5 min default
 })();
 const seenEventIds = new Set<string>();
 const SEEN_LIMIT = 1000;
@@ -42,11 +42,17 @@ export function verifySignature(rawBody: string, signature: string, timestamp: s
         return { ok: false, reason: 'missing signature or timestamp header' };
     }
 
-    // Anti-replay: timestamp must be within REPLAY_WINDOW_MS
-    const ts = Number(timestamp);
+    // X-WC-Timestamp is Unix epoch SECONDS per spec §6.2/§10.4.
+    // Tolerate ms accidentally — if value is > 10^11 it's almost certainly ms.
+    let ts = Number(timestamp);
     if (!Number.isFinite(ts)) return { ok: false, reason: 'malformed timestamp' };
-    const skew = Math.abs(Date.now() - ts);
-    if (skew > REPLAY_WINDOW_MS) return { ok: false, reason: `timestamp skew ${skew}ms > ${REPLAY_WINDOW_MS}ms` };
+    if (ts > 1e11) ts = Math.floor(ts / 1000); // accept ms gracefully
+
+    const nowSec = Math.floor(Date.now() / 1000);
+    const skewSec = Math.abs(nowSec - ts);
+    if (skewSec > REPLAY_WINDOW_SEC) {
+        return { ok: false, reason: `timestamp skew ${skewSec}s > ${REPLAY_WINDOW_SEC}s` };
+    }
 
     const provided = signature.startsWith('sha256=') ? signature.slice(7) : signature;
     const expected = crypto
