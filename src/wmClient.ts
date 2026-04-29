@@ -3,10 +3,13 @@
 // Graceful degradation: if WM_API_BASE_URL/WM_API_TOKEN are not set, ALL methods
 // return null/empty silently — listener flow still works in local-only mode.
 
-const BASE_URL = (process.env.WM_API_BASE_URL || '').replace(/\/$/, '');
-const TOKEN = process.env.WM_API_TOKEN || '';
-const TIMEOUT_MS = Number(process.env.WM_TIMEOUT_MS || 5000);
-const CACHE_TTL_MS = Number(process.env.WM_CACHE_TTL_MS || 10 * 60 * 1000);
+// Accept both naming conventions:
+//   WAVE_CONNECT_*  — used by the Wave Match team (their preferred prefix)
+//   WM_*            — short legacy names from initial spec
+const BASE_URL = (process.env.WAVE_CONNECT_BASE_URL || process.env.WM_API_BASE_URL || '').replace(/\/$/, '');
+const TOKEN = process.env.WAVE_CONNECT_API_TOKEN || process.env.WM_API_TOKEN || '';
+const TIMEOUT_MS = Number(process.env.WAVE_CONNECT_TIMEOUT_MS || process.env.WM_TIMEOUT_MS || 5000);
+const CACHE_TTL_MS = Number(process.env.WAVE_CONNECT_CACHE_TTL_MS || process.env.WM_CACHE_TTL_MS || 10 * 60 * 1000);
 
 export function isWMEnabled(): boolean {
     return !!(BASE_URL && TOKEN);

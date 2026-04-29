@@ -1781,12 +1781,12 @@ const start = async () => {
 
         // Wave Match integration (graceful: warns, doesn't fail)
         if (!isWMEnabled()) {
-            console.warn('[STARTUP] ℹ️  Wave Match API integration disabled (WM_API_BASE_URL or WM_API_TOKEN missing)');
+            console.warn('[STARTUP] ℹ️  Wave Match API integration disabled (WAVE_CONNECT_BASE_URL/WAVE_CONNECT_API_TOKEN missing)');
         } else {
-            console.log('[STARTUP] ✓ Wave Match API integration enabled');
+            console.log(`[STARTUP] ✓ Wave Match API integration enabled (base: ${(process.env.WAVE_CONNECT_BASE_URL || process.env.WM_API_BASE_URL || '').replace(/^https?:\/\//, '').split('/')[0]})`);
         }
-        if (!process.env.WM_WEBHOOK_SECRET) {
-            console.warn('[STARTUP] ⚠️  WM_WEBHOOK_SECRET missing — incoming WM webhooks will be rejected');
+        if (!process.env.WAVE_CONNECT_WEBHOOK_SECRET && !process.env.WM_WEBHOOK_SECRET) {
+            console.warn('[STARTUP] ⚠️  WAVE_CONNECT_WEBHOOK_SECRET missing — incoming WM webhooks will be rejected');
         }
 
         // Debug Frontend Path

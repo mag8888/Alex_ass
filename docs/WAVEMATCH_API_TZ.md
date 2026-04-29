@@ -413,16 +413,18 @@ on incoming message from user U:
 
 | Env переменная | Что | Откуда взять |
 |----------------|-----|--------------|
-| `WM_API_BASE_URL` | Базовый URL Wave Match API | например `https://api.wavematch.com` |
-| `WM_API_TOKEN` | Bearer-токен для нашего сервиса | сгенерировать на стороне WM: `node apps/api/scripts/wm-issue-key.js wave-chat-prod write` — **показать токен ровно один раз** |
-| `WM_WEBHOOK_SECRET` | HMAC-секрет для подписи webhook'ов | случайные 32 байта (`openssl rand -hex 32`); тот же секрет передать в WM при подписке через `POST /api/wm/webhooks` |
+| `WAVE_CONNECT_BASE_URL` | Базовый URL Wave Match API | например `https://api-production-b682a.up.railway.app` |
+| `WAVE_CONNECT_API_TOKEN` | Bearer-токен для нашего сервиса | сгенерировать на стороне WM: `node apps/api/scripts/wm-issue-key.js wave-chat-prod write` — **показать токен ровно один раз** |
+| `WAVE_CONNECT_WEBHOOK_SECRET` | HMAC-секрет для подписи webhook'ов | случайные 32 байта (`openssl rand -hex 32`); тот же секрет передать в WM при подписке через `POST /api/wm/webhooks` |
 
 **Опциональные:**
 | Env | Default | Что |
 |-----|---------|------|
-| `WM_TIMEOUT_MS` | 5000 | Таймаут на каждый запрос к WM |
-| `WM_CACHE_TTL_MS` | 600000 | TTL кэша профиля (10 мин) |
-| `WM_WELCOME_DELAY_MS` | 420000 | Задержка перед welcome-сообщением (7 мин) |
+| `WAVE_CONNECT_TIMEOUT_MS` | 5000 | Таймаут на каждый запрос к WM |
+| `WAVE_CONNECT_CACHE_TTL_MS` | 600000 | TTL кэша профиля (10 мин) |
+| `WAVE_CONNECT_WELCOME_DELAY_MS` | 420000 | Задержка перед welcome-сообщением (7 мин) |
+
+> Также поддерживаются legacy-имена `WM_API_BASE_URL`, `WM_API_TOKEN`, `WM_WEBHOOK_SECRET` — если уже выставлены, ничего менять не нужно.
 
 **Пуш-URL для webhook'а** (Wave Match шлёт сюда события):
 ```

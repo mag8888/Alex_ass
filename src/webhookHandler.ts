@@ -6,7 +6,7 @@ import { ensureUserAndDialogue, sendMessageToUser, createDraftMessage } from './
 import { generateResponse } from './gpt';
 import { emitEvent } from './events';
 
-const WEBHOOK_SECRET = process.env.WM_WEBHOOK_SECRET || '';
+const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
 const REPLAY_WINDOW_MS = 5 * 60 * 1000; // 5 min
 const seenEventIds = new Set<string>();
 const SEEN_LIMIT = 1000;
@@ -98,7 +98,7 @@ async function onUserCreated(data: { userId: string; telegramId?: string; firstN
     if (!data.telegramId) return { ok: true, reason: 'no TG id, nothing to do' };
 
     // Delay so it doesn't feel automated; default 7 min
-    const delayMs = Number(process.env.WM_WELCOME_DELAY_MS || 7 * 60 * 1000);
+    const delayMs = Number(process.env.WAVE_CONNECT_WELCOME_DELAY_MS || process.env.WM_WELCOME_DELAY_MS || 7 * 60 * 1000);
     setTimeout(() => sendWelcome(data).catch(e => console.error('[welcome] error:', e.message)), delayMs);
     return { ok: true };
 }
