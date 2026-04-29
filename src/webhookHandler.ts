@@ -7,7 +7,15 @@ import { generateResponse } from './gpt';
 import { emitEvent } from './events';
 
 const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
-const REPLAY_WINDOW_MS = 5 * 60 * 1000; // 5 min
+// REPLAY_WINDOW expressed in SECONDS (Wave Match team convention).
+// Falls back to legacy MS env, then to 300s (5 min).
+const REPLAY_WINDOW_MS = (() => {
+    const sec = Number(process.env.WAVE_CONNECT_WEBHOOK_REPLAY_WINDOW);
+    if (Number.isFinite(sec) && sec > 0) return sec * 1000;
+    const ms = Number(process.env.WM_WEBHOOK_REPLAY_WINDOW_MS);
+    if (Number.isFinite(ms) && ms > 0) return ms;
+    return 5 * 60 * 1000;
+})();
 const seenEventIds = new Set<string>();
 const SEEN_LIMIT = 1000;
 
