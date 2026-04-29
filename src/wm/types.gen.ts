@@ -4,35 +4,45 @@
  */
 
 export interface paths {
-    "/api/wm/users/by-telegram": {
+    "/api/wm/users/{id}": {
         parameters: {
             query?: never;
             header?: never;
-            path?: never;
+            path: {
+                /** @description Either UUID or `tg:<telegramId>` */
+                id: components["parameters"]["UserIdPath"];
+            };
             cookie?: never;
         };
         /**
-         * Lookup user by Telegram ID or username
-         * @description Fast path used on every incoming Telegram message. Wave Chat caches
-         *     the response for `WAVE_CONNECT_CACHE_TTL_MS` (default 10 min).
+         * Get user by ID (UUID or `tg:<telegramId>`)
+         * @description The path supports two id forms:
+         *     - **`<uuid>`** — Wave Match internal user UUID
+         *     - **`tg:<telegramId>`** — lookup by Telegram ID (used by Wave Chat on every
+         *       incoming TG message, cached for 10 minutes by default)
+         *
+         *     Layers in `include` are additive. Without `include`, only base User fields
+         *     are returned (no `profile`, `clubs`, `stats`).
          */
         get: {
             parameters: {
                 query?: {
-                    /** @description Comma-separated extra layers to load. */
+                    /** @description Comma-separated extra layers: `profile`, `clubs`, `stats` */
                     include?: components["parameters"]["IncludeQuery"];
-                    telegramId?: string;
-                    username?: string;
                 };
                 header?: never;
-                path?: never;
+                path: {
+                    /** @description Either UUID or `tg:<telegramId>` */
+                    id: components["parameters"]["UserIdPath"];
+                };
                 cookie?: never;
             };
             requestBody?: never;
             responses: {
-                /** @description User found */
+                /** @description User */
                 200: {
                     headers: {
+                        /** @description Strong ETag, format `"v{version}-{unix_seconds}"`. Echo back as `If-Match`. */
                         ETag?: string;
                         [name: string]: unknown;
                     };
@@ -49,34 +59,43 @@ export interface paths {
         delete?: never;
         options?: never;
         head?: never;
-        patch?: never;
-        trace?: never;
-    };
-    "/api/wm/users/{id}": {
-        parameters: {
-            query?: never;
-            header?: never;
-            path: {
-                id: components["parameters"]["UserIdPath"];
-            };
-            cookie?: never;
-        };
-        /** Get user by Wave Match ID */
-        get: {
+        /**
+         * Update writable user fields
+         * @description ## Writable fields
+         *     Only the keys listed under `WritableUserFields` are accepted. Any other
+         *     key (including `profile.*`, `gender`, `subscription`) returns
+         *     `400 readonly_field` with `{error, fields, allowedFields}`.
+         *
+         *     ## Concurrency
+         *     `If-Match` is **optional** server-side but **strongly recommended**.
+         *     - Without `If-Match`: update proceeds without version check.
+         *     - With matching `If-Match`: update applies, fresh ETag returned.
+         *     - With stale `If-Match`: `412 precondition_failed` with `{error, current: User}`.
+         *
+         *     ## Profile fields not modeled here
+         *     Profile fields (`city`, `activity`, `businessCard`, `bestClients`,
+         *     `requests`, `currentIncome`, `desiredIncome`, `networkingGoal`) **do not
+         *     exist** in Wave Match. Wave Chat keeps them in its own DB.
+         */
+        patch: {
             parameters: {
-                query?: {
-                    /** @description Comma-separated extra layers to load. */
-                    include?: components["parameters"]["IncludeQuery"];
+                query?: never;
+                header?: {
+                    "If-Match"?: string;
                 };
-                header?: never;
                 path: {
+                    /** @description Either UUID or `tg:<telegramId>` */
                     id: components["parameters"]["UserIdPath"];
                 };
                 cookie?: never;
             };
-            requestBody?: never;
+            requestBody: {
+                content: {
+                    "application/json": components["schemas"]["WritableUserFields"];
+                };
+            };
             responses: {
-                /** @description User */
+                /** @description Updated. Body is the full User object; new ETag in header. */
                 200: {
                     headers: {
                         ETag?: string;
@@ -86,56 +105,28 @@ export interface paths {
                         "application/json": components["schemas"]["User"];
                     };
                 };
-                404: components["responses"]["NotFound"];
-            };
-        };
-        put?: never;
-        post?: never;
-        delete?: never;
-        options?: never;
-        head?: never;
-        /**
-         * Update soft profile fields
-         * @description Optimistic concurrency: client MUST send `If-Match` with the ETag from
-         *     a recent `GET`. On 412 the client should refetch and retry.
-         */
-        patch: {
-            parameters: {
-                query?: never;
-                header: {
-                    "If-Match": string;
-                };
-                path: {
-                    id: components["parameters"]["UserIdPath"];
-                };
-                cookie?: never;
-            };
-            requestBody: {
-                content: {
-                    "application/json": {
-                        profile?: components["schemas"]["UserProfile"];
-                        gender?: components["schemas"]["Gender"];
+                /** @description Readonly field or invalid input */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError400"];
                     };
                 };
-            };
-            responses: {
-                /** @description Updated */
-                200: {
+                /** @description ETag mismatch (only when `If-Match` was sent and is stale) */
+                412: {
                     headers: {
-                        ETag?: string;
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
-                            /** @example true */
-                            ok: boolean;
-                            updatedFields: string[];
-                            etag: string;
+                            /** @example precondition_failed */
+                            error: string;
+                            current: components["schemas"]["User"];
                         };
                     };
                 };
-                412: components["responses"]["PreconditionFailed"];
-                422: components["responses"]["ValidationError"];
             };
         };
         trace?: never;
@@ -148,24 +139,26 @@ export interface paths {
             cookie?: never;
         };
         /**
-         * List users (filterable)
+         * List users (filterable, cursor-paginated)
          * @description Used by Wave Chat for broadcast-audience selection.
          */
         get: {
             parameters: {
                 query?: {
-                    subscriptionTier?: components["schemas"]["SubscriptionTier"];
-                    subscriptionStatus?: components["schemas"]["SubscriptionStatus"];
+                    limit?: number;
+                    /** @description Opaque base64url cursor from previous `nextCursor` */
+                    cursor?: string;
+                    updatedSince?: string;
+                    /** @description Comma-separated; values from SubscriptionTier */
+                    subscriptionTier?: string;
                     clubSlug?: string;
                     marketingOptIn?: boolean;
-                    lastActiveAfter?: string;
                     lastActiveBefore?: string;
+                    lastActiveAfter?: string;
                     hasEmail?: boolean;
-                    hasTelegram?: boolean;
                     locale?: string;
-                    minProfileCompleteness?: number;
-                    cursor?: string;
-                    pageSize?: number;
+                    /** @description Include `total` in response. Off by default to keep listing fast. */
+                    withTotal?: "1";
                 };
                 header?: never;
                 path?: never;
@@ -173,15 +166,17 @@ export interface paths {
             };
             requestBody?: never;
             responses: {
-                /** @description Page of users */
+                /** @description Page of users (slim shape) */
                 200: {
                     headers: {
                         [name: string]: unknown;
                     };
                     content: {
                         "application/json": {
-                            items: components["schemas"]["User"][];
-                            cursor?: string | null;
+                            items: components["schemas"]["UserListItem"][];
+                            nextCursor?: string | null;
+                            /** @description Only present when `withTotal=1` was passed. */
+                            total?: number | null;
                         };
                     };
                 };
@@ -200,6 +195,7 @@ export interface paths {
             query?: never;
             header?: never;
             path: {
+                /** @description Either UUID or `tg:<telegramId>` */
                 id: components["parameters"]["UserIdPath"];
             };
             cookie?: never;
@@ -209,10 +205,12 @@ export interface paths {
             parameters: {
                 query?: {
                     limit?: number;
-                    type?: string;
+                    /** @description Filter by single CrmNoteKind (not csv). */
+                    kind?: components["schemas"]["CrmNoteKind"];
                 };
                 header?: never;
                 path: {
+                    /** @description Either UUID or `tg:<telegramId>` */
                     id: components["parameters"]["UserIdPath"];
                 };
                 cookie?: never;
@@ -231,12 +229,28 @@ export interface paths {
             };
         };
         put?: never;
-        /** Append a CRM note */
+        /**
+         * Append a CRM note
+         * @description ## Wave Chat-specific note classification
+         *     Wave Match has 6 note kinds. Wave Chat's domain events
+         *     (`ai_qualification_done`, `ai_match_proposed`, `ai_churn_signal`, ...)
+         *     are stored as `kind: "system"` with the AI label embedded into `body`
+         *     and mirrored in `tags`. Example:
+         *     ```json
+         *     {
+         *       "kind": "system",
+         *       "body": "[ai_qualification_done] User passed qualification: maker, B2B SaaS",
+         *       "tags": ["ai", "qualification"],
+         *       "authorEmail": "wave-chat@aiass.app"
+         *     }
+         *     ```
+         */
         post: {
             parameters: {
                 query?: never;
                 header?: never;
                 path: {
+                    /** @description Either UUID or `tg:<telegramId>` */
                     id: components["parameters"]["UserIdPath"];
                 };
                 cookie?: never;
@@ -254,6 +268,15 @@ export interface paths {
                     };
                     content: {
                         "application/json": components["schemas"]["CrmNote"];
+                    };
+                };
+                /** @description Validation error */
+                400: {
+                    headers: {
+                        [name: string]: unknown;
+                    };
+                    content: {
+                        "application/json": components["schemas"]["ApiError400"];
                     };
                 };
             };
@@ -378,17 +401,17 @@ export interface paths {
          *
          *     ### HMAC payload format
          *     ```
-         *     message = `${X-WC-Timestamp}.${rawBody}`
-         *     signature = sha256_hex(secret, message)
-         *     header X-WC-Signature: sha256=<signature>
+         *     message   = `${X-WC-Timestamp}.${rawBody}`
+         *     signature = sha256_hex(WAVE_CONNECT_WEBHOOK_SECRET, message)
+         *     header    X-WC-Signature: sha256=<signature>
          *     ```
          *
          *     ### Rules
-         *     - `X-WC-Timestamp` is **Unix epoch seconds** (NOT milliseconds).
-         *     - Replay window: 300 seconds (configurable via `WAVE_CONNECT_WEBHOOK_REPLAY_WINDOW`).
-         *     - Idempotency: receiver dedupes by `X-WC-Event-Id`.
+         *     - `X-WC-Timestamp` is **Unix epoch seconds**.
+         *     - Replay window: 300s (configurable via `WAVE_CONNECT_WEBHOOK_REPLAY_WINDOW`).
+         *     - Idempotency: receiver dedupes by `X-WC-Delivery` header (UUID).
          *     - Receiver responds with **200 OK** within ≤ 5 sec on success.
-         *     - On any other status, sender retries: 1m → 5m → 30m → 2h → 6h → 24h, then dead-lettered.
+         *     - On any other status, sender retries: 1m → 5m → 30m → 2h → 6h → 24h, then dead.
          */
         post: {
             parameters: {
@@ -396,7 +419,7 @@ export interface paths {
                 header: {
                     "X-WC-Signature": string;
                     "X-WC-Timestamp": number;
-                    "X-WC-Event-Id": string;
+                    "X-WC-Delivery": string;
                 };
                 path?: never;
                 cookie?: never;
@@ -428,7 +451,6 @@ export interface paths {
                         "application/json": {
                             /** @example invalid signature */
                             error?: string;
-                            /** @example timestamp skew 320s > 300s */
                             reason?: string;
                         };
                     };
@@ -446,91 +468,146 @@ export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
         /** @enum {string} */
-        Gender: "MALE" | "FEMALE" | "UNKNOWN";
+        SubscriptionTier: "FREE" | "PLUS" | "PREMIUM" | "PARTNER";
         /** @enum {string} */
-        SubscriptionTier: "FREE" | "PRO" | "PREMIUM";
+        AuthProvider: "telegram" | "google" | "email" | "both";
         /** @enum {string} */
-        SubscriptionStatus: "ACTIVE" | "PAUSED" | "CANCELLED";
+        NotifPrefs: "all" | "weekly" | "off";
+        /**
+         * @description Gender stored on Profile (not on User)
+         * @enum {string}
+         */
+        Gender: "M" | "F" | "Other";
         /** @enum {string} */
-        Locale: "ru" | "en";
+        ClubRole: "member" | "admin";
         /** @enum {string} */
-        CrmNoteType: "ai_dialog" | "ai_qualification_done" | "ai_match_proposed" | "ai_match_accepted" | "ai_match_rejected" | "ai_churn_signal" | "manual";
-        UserProfile: {
-            city?: string | null;
-            /** @description Sphere of activity */
-            activity?: string | null;
-            businessCard?: string | null;
-            bestClients?: string | null;
-            requests?: string | null;
-            hobbies?: string | null;
-            currentIncome?: string | null;
-            desiredIncome?: string | null;
-            networkingGoal?: string | null;
+        CrmNoteKind: "call" | "email" | "meeting" | "note" | "status" | "system";
+        ApiError400: {
+            /**
+             * @description e.g. `readonly_field`, `invalid_kind`, `invalid_body`, `invalid_input`
+             * @example readonly_field
+             */
+            error: string;
+            /** @description Offending fields (when `error=readonly_field`) */
+            fields?: string[];
+            /** @description Set of fields the endpoint accepts (when `error=readonly_field`) */
+            allowedFields?: string[];
+        };
+        Profile: {
+            role?: string | null;
+            industry?: string | null;
+            location?: string | null;
+            company?: string | null;
+            gender?: components["schemas"]["Gender"];
             tags?: string[];
+            skills?: string[];
+            hobbies?: string[];
+            completion?: number;
         };
         Subscription: {
             tier?: components["schemas"]["SubscriptionTier"];
-            status?: components["schemas"]["SubscriptionStatus"];
             /** Format: date-time */
-            currentPeriodStart?: string;
-            /** Format: date-time */
-            currentPeriodEnd?: string;
-            marketingOptIn?: boolean;
+            renewsAt?: string | null;
         };
-        ClubMembership: {
+        Balances: {
+            usd?: number;
+            tokens?: number;
+            matchCredits?: number;
+        };
+        UserClubMembership: {
             /** @example b2b-pro */
             slug?: string;
+            clubName?: string;
             /** Format: date-time */
             joinedAt?: string;
-            /** @enum {string} */
-            role?: "MEMBER" | "MODERATOR" | "ADMIN";
+            role?: components["schemas"]["ClubRole"];
         };
-        Stats: {
-            /** @example 47800 */
-            lifetimeValue?: number;
-            /** @example 12 */
+        UserStats: {
             matchesCount?: number;
+            connectionsCount?: number;
             /** Format: date-time */
             lastMatchAt?: string | null;
         };
         User: {
-            /** @example wm_user_a1b2c3 */
+            /** Format: uuid */
             id: string;
-            /** @example 123456789 */
-            telegramId: string;
-            /** @example ivan_petrov */
-            username?: string | null;
-            firstName?: string | null;
-            lastName?: string | null;
-            gender?: components["schemas"]["Gender"];
-            /** Format: phone */
-            phone?: string | null;
+            /** @description BigInt as string */
+            telegramId?: string | null;
             /** Format: email */
             email?: string | null;
-            locale?: components["schemas"]["Locale"];
+            phone?: string | null;
+            firstName: string;
+            lastName?: string | null;
+            username?: string | null;
+            /** Format: uri */
+            photoUrl?: string | null;
+            authProvider: components["schemas"]["AuthProvider"];
+            /** @description Free string (e.g. `ru`, `en-US`). NOT an enum. */
+            locale?: string | null;
+            notifPrefs?: components["schemas"]["NotifPrefs"];
+            marketingOptIn?: boolean;
             /** Format: date-time */
-            registeredAt: string;
+            marketingOptInUpdatedAt?: string | null;
+            crmTags?: string[];
             /** Format: date-time */
-            lastActiveAt?: string | null;
-            /** @example W/"42-abc123" */
-            etag: string;
-            profile?: components["schemas"]["UserProfile"];
-            clubs?: components["schemas"]["ClubMembership"][];
+            createdAt: string;
+            /** Format: date-time */
+            updatedAt: string;
+            /** Format: date-time */
+            lastActiveAt?: string;
             subscription?: components["schemas"]["Subscription"];
-            stats?: components["schemas"]["Stats"];
+            balances?: components["schemas"]["Balances"];
+            rating?: number;
+            streakCount?: number;
+            profile?: components["schemas"]["Profile"];
+            clubs?: components["schemas"]["UserClubMembership"][];
+            stats?: components["schemas"]["UserStats"];
+        };
+        UserListItem: {
+            /** Format: uuid */
+            id: string;
+            telegramId?: string | null;
+            email?: string | null;
+            phone?: string | null;
+            firstName: string;
+            lastName?: string | null;
+            locale?: string | null;
+            subscriptionTier?: components["schemas"]["SubscriptionTier"];
+            marketingOptIn?: boolean;
+            crmTags?: string[];
+            /** Format: date-time */
+            lastActiveAt?: string;
+            /** Format: date-time */
+            updatedAt: string;
+        };
+        WritableUserFields: {
+            /** Format: email */
+            email?: string | null;
+            phone?: string | null;
+            firstName?: string;
+            lastName?: string | null;
+            notifPrefs?: components["schemas"]["NotifPrefs"];
+            marketingOptIn?: boolean;
+            /** Format: date-time */
+            marketingOptInUpdatedAt?: string;
+            crmTags?: string[];
+            locale?: string;
         };
         CrmNoteCreate: {
-            type: components["schemas"]["CrmNoteType"];
-            summary: string;
+            kind?: components["schemas"]["CrmNoteKind"];
+            body: string;
+            /** Format: email */
+            authorEmail?: string;
+            /** @default false */
+            pinned: boolean;
             tags?: string[];
-            linkedDialogId?: string;
         };
         CrmNote: components["schemas"]["CrmNoteCreate"] & {
+            /** Format: uuid */
             id: string;
             /** Format: date-time */
             createdAt: string;
-            /** @description Service-account or human user ID */
-            authorId: string;
+            authorId?: string | null;
         };
         /** @enum {string} */
         WebhookEventName: "user.created" | "user.updated" | "profile.updated" | "club.joined" | "club.left" | "subscription.changed";
@@ -545,6 +622,7 @@ export interface components {
             secret: string;
         };
         WebhookSubscription: components["schemas"]["WebhookSubscriptionCreate"] & {
+            /** Format: uuid */
             id: string;
             /** Format: date-time */
             createdAt: string;
@@ -552,26 +630,22 @@ export interface components {
             failureCount: number;
             /** Format: date-time */
             lastSuccessAt?: string | null;
-            /** @description Never returned in responses; encrypted at rest. */
+            /** @description Never returned in responses; encryption-at-rest planned. */
             secret?: string;
         };
         WebhookEventBase: {
-            /** @example evt_a1b2c3 */
-            eventId: string;
             event: components["schemas"]["WebhookEventName"];
+            /** Format: uuid */
+            deliveryId: string;
             /** Format: date-time */
-            occurredAt: string;
+            createdAt: string;
         };
         WebhookEvent: components["schemas"]["WebhookEvent_UserCreated"] | components["schemas"]["WebhookEvent_UserUpdated"] | components["schemas"]["WebhookEvent_ProfileUpdated"] | components["schemas"]["WebhookEvent_ClubJoined"] | components["schemas"]["WebhookEvent_ClubLeft"] | components["schemas"]["WebhookEvent_SubscriptionChanged"];
         WebhookEvent_UserCreated: components["schemas"]["WebhookEventBase"] & {
             /** @enum {string} */
             event?: "user.created";
-            data?: {
-                userId: string;
-                telegramId?: string | null;
-                username?: string | null;
-                firstName?: string | null;
-                locale?: components["schemas"]["Locale"];
+            data: {
+                user: components["schemas"]["User"];
             };
         } & {
             /**
@@ -583,9 +657,8 @@ export interface components {
         WebhookEvent_UserUpdated: components["schemas"]["WebhookEventBase"] & {
             /** @enum {string} */
             event?: "user.updated";
-            data?: {
-                userId: string;
-                telegramId?: string | null;
+            data: {
+                user: components["schemas"]["User"];
                 changedFields?: string[];
             };
         } & {
@@ -598,10 +671,12 @@ export interface components {
         WebhookEvent_ProfileUpdated: components["schemas"]["WebhookEventBase"] & {
             /** @enum {string} */
             event?: "profile.updated";
-            data?: {
+            data: {
+                /** Format: uuid */
                 userId: string;
-                telegramId?: string | null;
-                fields?: components["schemas"]["UserProfile"];
+                profile: components["schemas"]["Profile"];
+                /** @description true on first profile creation; absent on edits. */
+                isFirstTime?: boolean;
             };
         } & {
             /**
@@ -613,10 +688,12 @@ export interface components {
         WebhookEvent_ClubJoined: components["schemas"]["WebhookEventBase"] & {
             /** @enum {string} */
             event?: "club.joined";
-            data?: {
+            data: {
+                /** Format: uuid */
                 userId: string;
-                telegramId?: string | null;
                 clubSlug: string;
+                clubName?: string;
+                role?: components["schemas"]["ClubRole"];
             };
         } & {
             /**
@@ -629,6 +706,7 @@ export interface components {
             /** @enum {string} */
             event?: "club.left";
             data?: {
+                /** Format: uuid */
                 userId: string;
                 clubSlug: string;
             };
@@ -643,11 +721,12 @@ export interface components {
             /** @enum {string} */
             event?: "subscription.changed";
             data?: {
+                /** Format: uuid */
                 userId: string;
-                telegramId?: string | null;
-                oldTier: components["schemas"]["SubscriptionTier"];
-                newTier: components["schemas"]["SubscriptionTier"];
-                status: components["schemas"]["SubscriptionStatus"];
+                from: components["schemas"]["SubscriptionTier"];
+                to: components["schemas"]["SubscriptionTier"];
+                /** Format: date-time */
+                effectiveAt: string;
             };
         } & {
             /**
@@ -682,38 +761,11 @@ export interface components {
                 };
             };
         };
-        /** @description ETag in If-Match did not match current resource version */
-        PreconditionFailed: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": {
-                    /** @example etag_mismatch */
-                    error?: string;
-                };
-            };
-        };
-        /** @description Request body validation failed */
-        ValidationError: {
-            headers: {
-                [name: string]: unknown;
-            };
-            content: {
-                "application/json": {
-                    /** @example invalid_input */
-                    error?: string;
-                    details?: {
-                        field?: string;
-                        message?: string;
-                    }[];
-                };
-            };
-        };
     };
     parameters: {
+        /** @description Either UUID or `tg:<telegramId>` */
         UserIdPath: string;
-        /** @description Comma-separated extra layers to load. */
+        /** @description Comma-separated extra layers: `profile`, `clubs`, `stats` */
         IncludeQuery: string;
     };
     requestBodies: never;

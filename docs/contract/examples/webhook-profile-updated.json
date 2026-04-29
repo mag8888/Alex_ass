@@ -1,13 +1,17 @@
 {
-  "eventId": "evt_01HX8K5WJH4FUC",
   "event": "profile.updated",
-  "occurredAt": "2026-04-29T08:34:51Z",
+  "deliveryId": "7b4a8c12-2e73-4cf0-b2f7-9f1e2dab3344",
+  "createdAt": "2026-04-29T08:34:51Z",
   "data": {
-    "userId": "wm_user_a1b2c3",
-    "telegramId": "123456789",
-    "fields": {
-      "city": "Санкт-Петербург",
-      "activity": "FinTech / banking-as-a-service"
-    }
+    "userId": "8b574bb1-5c72-4662-b497-c8cbe259727f",
+    "profile": {
+      "role": "Marketer",
+      "industry": "B2B SaaS",
+      "location": "Москва",
+      "tags": ["b2b", "marketing"],
+      "skills": ["paid-ads"],
+      "completion": 60
+    },
+    "isFirstTime": false
   }
 }

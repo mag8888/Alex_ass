@@ -1,10 +1,11 @@
 {
-  "eventId": "evt_01HX8K5WJJ7CVD",
   "event": "club.joined",
-  "occurredAt": "2026-04-29T09:10:00Z",
+  "deliveryId": "9f02b6a8-3d11-4cf2-8a55-021bc7f15e22",
+  "createdAt": "2026-04-29T09:10:00Z",
   "data": {
-    "userId": "wm_user_a1b2c3",
-    "telegramId": "123456789",
-    "clubSlug": "b2b-pro"
+    "userId": "8b574bb1-5c72-4662-b497-c8cbe259727f",
+    "clubSlug": "b2b-pro",
+    "clubName": "B2B Pro",
+    "role": "member"
   }
 }

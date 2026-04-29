@@ -1,12 +1,24 @@
 {
-  "eventId": "evt_01HX8K5WJF9RAS",
   "event": "user.created",
-  "occurredAt": "2026-04-29T08:14:00Z",
+  "deliveryId": "5576edeb-fd23-49f8-b8de-da21d55e939f",
+  "createdAt": "2026-04-29T08:14:00Z",
   "data": {
-    "userId": "wm_user_a1b2c3",
-    "telegramId": "123456789",
-    "username": "ivan_petrov",
-    "firstName": "Иван",
-    "locale": "ru"
+    "user": {
+      "id": "8b574bb1-5c72-4662-b497-c8cbe259727f",
+      "telegramId": "354670132",
+      "firstName": "Иван",
+      "authProvider": "telegram",
+      "locale": "ru",
+      "notifPrefs": "all",
+      "marketingOptIn": false,
+      "crmTags": [],
+      "createdAt": "2026-04-29T08:14:00Z",
+      "updatedAt": "2026-04-29T08:14:00Z",
+      "lastActiveAt": "2026-04-29T08:14:00Z",
+      "subscription": { "tier": "FREE", "renewsAt": null },
+      "balances": { "usd": 0, "tokens": 0, "matchCredits": 0 },
+      "rating": 0,
+      "streakCount": 0
+    }
   }
 }

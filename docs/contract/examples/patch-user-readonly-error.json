@@ -1,0 +1,9 @@
+{
+  "error": "readonly_field",
+  "fields": ["profile", "gender"],
+  "allowedFields": [
+    "email", "phone", "firstName", "lastName",
+    "notifPrefs", "marketingOptIn", "marketingOptInUpdatedAt",
+    "crmTags", "locale"
+  ]
+}

@@ -65,7 +65,11 @@ fastify.addHook('preParsing', async (req: any, _reply, payload) => {
 fastify.post('/webhooks/wm', async (req: any, reply) => {
     const signature = req.headers['x-wc-signature'] as string;
     const timestamp = req.headers['x-wc-timestamp'] as string;
-    const eventId = (req.headers['x-wm-event-id'] || req.headers['x-wc-event-id']) as string;
+    // Wave Match deployed shape: X-WC-Delivery (UUID, used for idempotency).
+    // Tolerate legacy x-wc-event-id / x-wm-event-id if anyone retains them.
+    const headerDeliveryId = (req.headers['x-wc-delivery']
+        || req.headers['x-wc-event-id']
+        || req.headers['x-wm-event-id']) as string | undefined;
     const raw = req.rawBody || '';
 
     const verify = verifySignature(raw, signature, timestamp);
@@ -75,10 +79,11 @@ fastify.post('/webhooks/wm', async (req: any, reply) => {
     }
 
     const evt = req.body as any;
+    const deliveryId = headerDeliveryId || evt.deliveryId || evt.eventId || `${evt.event}-${Date.now()}`;
     const result = await handleWMEvent({
-        eventId: eventId || evt.eventId || `${evt.event}-${Date.now()}`,
+        deliveryId,
         event: evt.event,
-        occurredAt: evt.occurredAt,
+        createdAt: evt.createdAt || evt.occurredAt,
         data: evt.data || {},
     });
     return result.ok ? reply.code(200).send({ ok: true }) : reply.code(500).send(result);
@@ -369,13 +374,13 @@ fastify.post('/users/:aId/connect/:bId', async (req, reply) => {
         if (a?.telegramId && b?.telegramId) {
             (async () => {
                 try {
-                    const { getUserByTelegramId, addNote } = await import('./wmClient');
+                    const { getUserByTelegramId, addAiNote } = await import('./wmClient');
                     const [wmA, wmB] = await Promise.all([
                         getUserByTelegramId(a.telegramId),
                         getUserByTelegramId(b.telegramId),
                     ]);
-                    if (wmA) await addNote(wmA.id, 'ai_match_proposed', `Предложен матч с @${b.username || b.telegramId}`, { tags: ['match'], linkedDialogId: String(result.aDialogueId) });
-                    if (wmB) await addNote(wmB.id, 'ai_match_proposed', `Предложен матч с @${a.username || a.telegramId}`, { tags: ['match'], linkedDialogId: String(result.bDialogueId) });
+                    if (wmA) await addAiNote(wmA.id, 'ai_match_proposed', `Предложен матч с @${b.username || b.telegramId}`, { tags: ['match'], linkedDialogId: result.aDialogueId });
+                    if (wmB) await addAiNote(wmB.id, 'ai_match_proposed', `Предложен матч с @${a.username || a.telegramId}`, { tags: ['match'], linkedDialogId: result.bDialogueId });
                 } catch (_) { }
             })();
         }

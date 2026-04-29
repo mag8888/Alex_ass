@@ -13,7 +13,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, getAdminUsername } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
-import { getUserByTelegramId, patchUserProfile, addNote, isWMEnabled, WMUser } from './wmClient';
+import { getUserByTelegramId, addAiNote, addCrmTag, isWMEnabled, WMUser } from './wmClient';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
 // Refresh every 30s so admin edits propagate without restart, but DB hits stay low.
@@ -174,26 +174,28 @@ export async function startListener(_page?: any) {
             console.log(`[Listener] Auto-promoted dialogue ${dialogue.id} to QUALIFICATION (first inbound)`);
         }
 
-        // ── Pull Wave Match profile (source-of-truth) and merge into local user ────
+        // ── Pull Wave Match profile for context ────────────────────────────
+        // WM Profile fields (role/industry/location/company/skills/hobbies) differ
+        // from our internal extraction (city/activity/businessCard/...). We keep
+        // our taxonomy locally; from WM we just absorb a few overlapping signals.
         let wmUser: WMUser | null = null;
         if (isWMEnabled()) {
-            wmUser = await getUserByTelegramId(user.telegramId);
+            wmUser = await getUserByTelegramId(user.telegramId, 'profile');
             if (wmUser) {
-                // Merge WM.profile into our local copy ONLY for fields that are empty locally.
-                // WM is source-of-truth, but we don't overwrite richer local data unless WM has it.
                 const p = wmUser.profile || {};
                 const merge: any = {};
-                for (const k of ['city', 'activity', 'businessCard', 'bestClients', 'requests', 'hobbies', 'currentIncome', 'desiredIncome', 'networkingGoal']) {
-                    const wmVal = (p as any)[k];
-                    const localVal = (user as any)[k];
-                    if (wmVal && (!localVal || String(localVal).trim() === '')) {
-                        merge[k] = wmVal;
-                    }
+                // Only merge into LOCAL fields that are still empty.
+                if (!user.city && p.location) merge.city = p.location;
+                if (!user.activity && (p.role || p.industry)) {
+                    merge.activity = [p.role, p.industry].filter(Boolean).join(' / ');
+                }
+                if (!user.hobbies && Array.isArray(p.hobbies) && p.hobbies.length > 0) {
+                    merge.hobbies = p.hobbies.join(', ');
                 }
                 if (Object.keys(merge).length > 0) {
                     await prisma.user.update({ where: { id: user.id }, data: merge });
                     Object.assign(user, merge);
-                    console.log(`[wm] Merged ${Object.keys(merge).join(', ')} from Wave Match into local user`);
+                    console.log(`[wm] Absorbed signals from WM profile: ${Object.keys(merge).join(', ')}`);
                 }
             }
         }
@@ -249,12 +251,11 @@ export async function startListener(_page?: any) {
                 await prisma.user.update({ where: { id: user.id }, data: safe });
                 console.log(`[Listener] Extracted profile fields: ${Object.keys(safe).join(', ')}`);
 
-                // ── Push the same fields to Wave Match (best-effort) ────────────
-                if (wmUser) {
-                    const updated = await patchUserProfile(wmUser.id, wmUser.etag, { profile: safe });
-                    if (updated) {
-                        console.log(`[wm] Synced ${Object.keys(safe).length} fields to Wave Match for ${wmUser.id}`);
-                    }
+                // We don't sync profile.* to Wave Match — WM doesn't model these
+                // fields. Instead, on first activity-extraction we mark the WM
+                // user with a `ai-profiling` tag so admins can spot AI-touched users.
+                if (wmUser && safe.activity) {
+                    addCrmTag(wmUser.id, 'ai-profiling').catch(e => console.error('[wm] addCrmTag error:', e.message));
                 }
             }
         }
@@ -263,17 +264,18 @@ export async function startListener(_page?: any) {
             await prisma.dialogue.update({ where: { id: dialogue.id }, data: { stage: gptResult.nextStage } });
             console.log(`[Listener] Stage ${currentStage} → ${gptResult.nextStage}`);
 
-            // CRM note when qualification finishes
+            // CRM note when qualification finishes — AI label embedded into body+tags.
             if (gptResult.nextStage === 'CLOSED' && wmUser) {
                 const summary = [
                     user.activity && `Сфера: ${user.activity}`,
                     user.requests && `Запросы: ${user.requests}`,
                     user.city && `Город: ${user.city}`,
                 ].filter(Boolean).join(' · ');
-                await addNote(wmUser.id, 'ai_qualification_done', summary || 'Профиль заполнен в диалоге AI', {
+                await addAiNote(wmUser.id, 'ai_qualification_done', summary || 'Профиль заполнен в диалоге AI', {
                     tags: ['qualified'],
-                    linkedDialogId: String(dialogue.id),
+                    linkedDialogId: dialogue.id,
                 });
+                addCrmTag(wmUser.id, 'ai-qualified').catch(() => { });
             }
         }
 

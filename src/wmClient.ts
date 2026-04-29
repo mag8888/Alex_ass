@@ -1,46 +1,54 @@
 // ── Wave Match API client ───────────────────────────────────────────────────
-// Implements the contract from docs/contract/openapi.yaml (v1.1.2).
-// Types are GENERATED — never edit src/wm/types.gen.ts by hand.
-// Re-run `npm run gen:wm-types` whenever the spec changes.
-//
-// Graceful degradation: if WAVE_CONNECT_BASE_URL/WAVE_CONNECT_API_TOKEN aren't
-// set, ALL methods return null/empty silently; listener flow keeps working.
+// Aligned with docs/contract/openapi.yaml v1.2.0 (deployed reality, not aspiration).
+// Types generated via: npm run gen:wm-types
 
 import type { components, paths } from './wm/types.gen';
 
-// ── Re-export schema types under stable local names so callers don't have to
-// follow the deep components.schemas.X path. These names are kept stable across
-// spec versions; if the spec renames something, fix it here ONCE.
+// ── Stable local re-exports of generated schema types ──────────────────────
 export type WMUser = components['schemas']['User'];
-export type WMProfile = components['schemas']['UserProfile'];
+export type WMUserListItem = components['schemas']['UserListItem'];
+export type WMProfile = components['schemas']['Profile'];
 export type WMSubscription = components['schemas']['Subscription'];
-export type WMClubMembership = components['schemas']['ClubMembership'];
-export type WMStats = components['schemas']['Stats'];
-export type CrmNoteType = components['schemas']['CrmNoteType'];
+export type WMUserClubMembership = components['schemas']['UserClubMembership'];
+export type WMUserStats = components['schemas']['UserStats'];
+export type WritableUserFields = components['schemas']['WritableUserFields'];
+export type WMSubscriptionTier = components['schemas']['SubscriptionTier'];
 export type CrmNoteCreate = components['schemas']['CrmNoteCreate'];
+export type CrmNote = components['schemas']['CrmNote'];
+export type CrmNoteKind = components['schemas']['CrmNoteKind'];
 export type WebhookEventName = components['schemas']['WebhookEventName'];
 
-// Accept both naming conventions:
-//   WAVE_CONNECT_*  — Wave Match team's preferred prefix
-//   WM_*            — short legacy names
+// Wave Chat-specific note labels — embedded in `body` and mirrored into `tags`.
+// The Wave Match server never sees these as enum values, only as text/tags.
+export type WCNoteLabel =
+    | 'ai_dialog'
+    | 'ai_qualification_done'
+    | 'ai_match_proposed'
+    | 'ai_match_accepted'
+    | 'ai_match_rejected'
+    | 'ai_churn_signal';
+
+// ── Configuration (env aliases supported) ────────────────────────────────────
 const BASE_URL = (process.env.WAVE_CONNECT_BASE_URL || process.env.WM_API_BASE_URL || '').replace(/\/$/, '');
 const TOKEN = process.env.WAVE_CONNECT_API_TOKEN || process.env.WM_API_TOKEN || '';
 const TIMEOUT_MS = Number(process.env.WAVE_CONNECT_TIMEOUT_MS || process.env.WM_TIMEOUT_MS || 5000);
 const CACHE_TTL_MS = Number(process.env.WAVE_CONNECT_CACHE_TTL_MS || process.env.WM_CACHE_TTL_MS || 10 * 60 * 1000);
+const NOTE_AUTHOR_EMAIL = process.env.WAVE_CONNECT_NOTE_AUTHOR_EMAIL || 'wave-chat@aiass.app';
 
 export function isWMEnabled(): boolean {
     return !!(BASE_URL && TOKEN);
 }
 
-// ── In-memory cache (per id + per telegramId) ────────────────────────────────
-type CacheEntry = { user: WMUser; expiresAt: number };
+// ── In-memory cache: by id and by telegramId ────────────────────────────────
+type CacheEntry = { user: WMUser; etag: string | null; expiresAt: number };
 const cacheById = new Map<string, CacheEntry>();
 const cacheByTg = new Map<string, CacheEntry>();
 
-function setCache(user: WMUser) {
+function setCache(user: WMUser, etag: string | null) {
     const expiresAt = Date.now() + CACHE_TTL_MS;
-    cacheById.set(user.id, { user, expiresAt });
-    if (user.telegramId) cacheByTg.set(user.telegramId, { user, expiresAt });
+    const entry: CacheEntry = { user, etag, expiresAt };
+    cacheById.set(user.id, entry);
+    if (user.telegramId) cacheByTg.set(user.telegramId, entry);
 }
 
 export function invalidateCache(idOrTelegramId: string) {
@@ -48,12 +56,19 @@ export function invalidateCache(idOrTelegramId: string) {
     cacheByTg.delete(idOrTelegramId);
 }
 
-// ── Low-level HTTP with timeout + auth header ────────────────────────────────
-async function request(path: string, init: RequestInit = {}): Promise<Response> {
+/** Stored ETag for a previously fetched user (or null). */
+export function getCachedEtag(idOrTelegramId: string): string | null {
+    return cacheById.get(idOrTelegramId)?.etag ?? cacheByTg.get(idOrTelegramId)?.etag ?? null;
+}
+
+// ── Low-level HTTP with timeout + auth ──────────────────────────────────────
+interface RequestOpts extends Omit<RequestInit, 'signal'> { timeoutMs?: number }
+
+async function request(path: string, init: RequestOpts = {}): Promise<Response> {
     if (!isWMEnabled()) throw new Error('WM_API not configured');
 
     const ctrl = new AbortController();
-    const timer = setTimeout(() => ctrl.abort(), TIMEOUT_MS);
+    const timer = setTimeout(() => ctrl.abort(), init.timeoutMs ?? TIMEOUT_MS);
     try {
         return await fetch(`${BASE_URL}${path}`, {
             ...init,
@@ -70,93 +85,144 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     }
 }
 
-// ── Endpoints (typed via paths['<route>']['<verb>']['responses'] etc) ───────
+// ── GET /api/wm/users/:id (id can be UUID or "tg:<telegramId>") ─────────────
 
-type GetByTelegramQuery = NonNullable<
-    paths['/api/wm/users/by-telegram']['get']['parameters']['query']
->;
-
-export async function getUserByTelegramId(telegramId: string, include = 'profile,subscription'): Promise<WMUser | null> {
+async function fetchUser(idOrTgPath: string, include: string, cacheKey: string, isTelegram: boolean): Promise<WMUser | null> {
     if (!isWMEnabled()) return null;
 
-    const cached = cacheByTg.get(telegramId);
+    const cached = (isTelegram ? cacheByTg : cacheById).get(cacheKey);
     if (cached && cached.expiresAt > Date.now()) return cached.user;
 
     try {
-        const qs: GetByTelegramQuery = { telegramId, include };
-        const params = new URLSearchParams(qs as Record<string, string>);
-        const res = await request(`/api/wm/users/by-telegram?${params}`);
+        const url = `/api/wm/users/${idOrTgPath}?include=${encodeURIComponent(include)}`;
+        const res = await request(url);
         if (res.status === 404) return null;
         if (!res.ok) {
-            console.error(`[wm] getUserByTelegramId ${res.status}`);
+            console.error(`[wm] fetchUser ${idOrTgPath} ${res.status}`);
             return null;
         }
         const user = (await res.json()) as WMUser;
-        setCache(user);
+        const etag = res.headers.get('etag');
+        setCache(user, etag);
         return user;
     } catch (e: any) {
-        console.error('[wm] getUserByTelegramId error:', e.message);
+        console.error(`[wm] fetchUser ${idOrTgPath} error:`, e.message);
         return null;
     }
 }
 
-export async function getUserById(id: string, include = 'profile,subscription'): Promise<WMUser | null> {
-    if (!isWMEnabled()) return null;
-
-    const cached = cacheById.get(id);
-    if (cached && cached.expiresAt > Date.now()) return cached.user;
-
-    try {
-        const res = await request(`/api/wm/users/${encodeURIComponent(id)}?include=${encodeURIComponent(include)}`);
-        if (res.status === 404) return null;
-        if (!res.ok) return null;
-        const user = (await res.json()) as WMUser;
-        setCache(user);
-        return user;
-    } catch (e: any) {
-        console.error('[wm] getUserById error:', e.message);
-        return null;
-    }
+export async function getUserByTelegramId(telegramId: string, include = 'profile'): Promise<WMUser | null> {
+    return fetchUser(`tg:${encodeURIComponent(telegramId)}`, include, telegramId, true);
 }
 
-type PatchProfileBody = NonNullable<
-    paths['/api/wm/users/{id}']['patch']['requestBody']
->['content']['application/json'];
+export async function getUserById(id: string, include = 'profile'): Promise<WMUser | null> {
+    return fetchUser(encodeURIComponent(id), include, id, false);
+}
 
-export type PatchProfileInput = PatchProfileBody;
+// ── PATCH /api/wm/users/:id ─────────────────────────────────────────────────
 
-export async function patchUserProfile(id: string, etag: string, body: PatchProfileInput): Promise<WMUser | null> {
+export interface PatchResult {
+    user: WMUser;
+    etag: string | null;
+    /** Diffed by the client (server doesn't return this). Empty if `user` shape is unchanged. */
+    updatedFields: string[];
+}
+
+export async function patchUser(
+    id: string,
+    body: WritableUserFields,
+    options: { ifMatch?: string | null } = {},
+): Promise<PatchResult | null> {
     if (!isWMEnabled()) return null;
+
     try {
+        const headers: Record<string, string> = {};
+        if (options.ifMatch) headers['If-Match'] = options.ifMatch;
+
         const res = await request(`/api/wm/users/${encodeURIComponent(id)}`, {
             method: 'PATCH',
-            headers: { 'If-Match': etag },
+            headers,
             body: JSON.stringify(body),
         });
+
         if (res.status === 412) {
+            // Stale ETag — invalidate cache, drop result; caller can refetch + retry.
             invalidateCache(id);
-            console.warn(`[wm] patchUserProfile 412 for ${id} — concurrent edit, invalidated cache`);
+            const payload = await res.json().catch(() => null) as any;
+            if (payload?.current) {
+                const fresh = payload.current as WMUser;
+                setCache(fresh, res.headers.get('etag'));
+            }
+            console.warn(`[wm] patchUser 412 (stale ETag) for ${id}`);
             return null;
         }
+
+        if (res.status === 400) {
+            const err = await res.json().catch(() => ({})) as any;
+            console.error(`[wm] patchUser 400 for ${id}: error=${err.error} fields=${(err.fields || []).join(',')}`);
+            return null;
+        }
+
         if (!res.ok) {
-            console.error(`[wm] patchUserProfile ${res.status} for ${id}`);
+            console.error(`[wm] patchUser ${res.status} for ${id}`);
             return null;
         }
-        // Endpoint returns ack object; refetch the full user to keep cache hot
-        await res.json().catch(() => null);
-        const refreshed = await getUserById(id);
-        return refreshed;
+
+        const updated = (await res.json()) as WMUser;
+        const newEtag = res.headers.get('etag');
+        setCache(updated, newEtag);
+
+        // Compute updatedFields by diffing request keys vs response (best-effort).
+        const updatedFields = Object.keys(body).filter(k => {
+            const wanted = (body as any)[k];
+            const got = (updated as any)[k];
+            return JSON.stringify(wanted) === JSON.stringify(got);
+        });
+
+        return { user: updated, etag: newEtag, updatedFields };
     } catch (e: any) {
-        console.error('[wm] patchUserProfile error:', e.message);
+        console.error('[wm] patchUser error:', e.message);
         return null;
     }
 }
 
-type ListUsersQuery = NonNullable<paths['/api/wm/users']['get']['parameters']['query']>;
-export type ListUsersFilter = ListUsersQuery;
-type ListUsersResp = paths['/api/wm/users']['get']['responses']['200']['content']['application/json'];
+/**
+ * Append a single tag to user.crmTags via PATCH (deduped client-side).
+ * Convenience wrapper used by the listener.
+ */
+export async function addCrmTag(id: string, tag: string): Promise<boolean> {
+    const cached = cacheById.get(id);
+    let baseUser = cached?.user || null;
+    let etag = cached?.etag || null;
+    if (!baseUser) {
+        baseUser = await getUserById(id);
+        etag = getCachedEtag(id);
+    }
+    if (!baseUser) return false;
 
-export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: WMUser[]; cursor?: string | null }> {
+    const tags = new Set([...(baseUser.crmTags || []), tag]);
+    const result = await patchUser(id, { crmTags: Array.from(tags) }, { ifMatch: etag });
+    return !!result;
+}
+
+// ── GET /api/wm/users (list) ────────────────────────────────────────────────
+
+export interface ListUsersFilter {
+    limit?: number;
+    cursor?: string;
+    updatedSince?: string;
+    /** Comma-separated values from SubscriptionTier */
+    subscriptionTier?: string;
+    clubSlug?: string;
+    marketingOptIn?: boolean;
+    lastActiveAfter?: string;
+    lastActiveBefore?: string;
+    hasEmail?: boolean;
+    locale?: string;
+    withTotal?: '1';
+}
+
+export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: WMUserListItem[]; nextCursor?: string | null; total?: number | null }> {
     if (!isWMEnabled()) return { items: [] };
     try {
         const qs = new URLSearchParams();
@@ -165,41 +231,57 @@ export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: 
         }
         const res = await request(`/api/wm/users?${qs.toString()}`);
         if (!res.ok) return { items: [] };
-        return (await res.json()) as ListUsersResp;
+        return await res.json();
     } catch (e: any) {
         console.error('[wm] listUsers error:', e.message);
         return { items: [] };
     }
 }
 
-export async function addNote(
-    userId: string,
-    type: CrmNoteType,
-    summary: string,
-    options: { tags?: string[]; linkedDialogId?: string } = {},
-): Promise<boolean> {
-    if (!isWMEnabled()) return false;
+// ── POST /api/wm/users/:id/notes ────────────────────────────────────────────
+
+export async function createNote(userId: string, body: CrmNoteCreate): Promise<CrmNote | null> {
+    if (!isWMEnabled()) return null;
     try {
-        const body: CrmNoteCreate = {
-            type,
-            summary: summary.slice(0, 1000),
-            tags: options.tags,
-            linkedDialogId: options.linkedDialogId,
-        };
         const res = await request(`/api/wm/users/${encodeURIComponent(userId)}/notes`, {
             method: 'POST',
             body: JSON.stringify(body),
         });
-        return res.ok;
+        if (!res.ok) {
+            console.error(`[wm] createNote ${res.status} for ${userId}`);
+            return null;
+        }
+        return (await res.json()) as CrmNote;
     } catch (e: any) {
-        console.error('[wm] addNote error:', e.message);
-        return false;
+        console.error('[wm] createNote error:', e.message);
+        return null;
     }
 }
 
-// ── Webhook subscription management ──────────────────────────────────────────
+/**
+ * Wave Chat-specific note: embeds an AI label into body+tags, kind=system.
+ * Replaces the legacy v1.1.x `addNote(type, summary)` API.
+ */
+export async function addAiNote(
+    userId: string,
+    label: WCNoteLabel,
+    text: string,
+    options: { tags?: string[]; pinned?: boolean; linkedDialogId?: string | number } = {},
+): Promise<boolean> {
+    const trimmed = text.slice(0, 3800); // leave room for the [label] prefix
+    const linkedSuffix = options.linkedDialogId ? ` (dialogue=${options.linkedDialogId})` : '';
+    const body: CrmNoteCreate = {
+        kind: 'system',
+        body: `[${label}] ${trimmed}${linkedSuffix}`,
+        tags: ['ai', label.replace(/^ai_/, ''), ...(options.tags || [])],
+        authorEmail: NOTE_AUTHOR_EMAIL,
+        pinned: options.pinned ?? false,
+    };
+    const created = await createNote(userId, body);
+    return !!created;
+}
 
-type WebhookSubscriptionCreate = components['schemas']['WebhookSubscriptionCreate'];
+// ── Webhook subscription mgmt ───────────────────────────────────────────────
 
 export async function ensureWebhookSubscription(
     callbackUrl: string,
@@ -217,35 +299,11 @@ export async function ensureWebhookSubscription(
                 return true;
             }
         }
-
-        const body: WebhookSubscriptionCreate = { url: callbackUrl, events, secret };
-        const createRes = await request('/api/wm/webhooks', {
-            method: 'POST',
-            body: JSON.stringify(body),
-        });
-        if (createRes.ok) {
-            console.log('[wm] Webhook subscription created');
-            return true;
-        }
-        console.error(`[wm] ensureWebhookSubscription failed: ${createRes.status}`);
-        return false;
+        const body: components['schemas']['WebhookSubscriptionCreate'] = { url: callbackUrl, events, secret };
+        const createRes = await request('/api/wm/webhooks', { method: 'POST', body: JSON.stringify(body) });
+        return createRes.ok;
     } catch (e: any) {
         console.error('[wm] ensureWebhookSubscription error:', e.message);
         return false;
     }
-}
-
-// ── Convenience: derive missing profile fields ──────────────────────────────
-
-export const WM_PROFILE_KEYS: (keyof WMProfile)[] = [
-    'city', 'activity', 'businessCard', 'bestClients',
-    'requests', 'hobbies', 'currentIncome', 'desiredIncome', 'networkingGoal',
-];
-
-export function missingProfileFields(user: WMUser): (keyof WMProfile)[] {
-    const p = user.profile || ({} as WMProfile);
-    return WM_PROFILE_KEYS.filter(k => {
-        const v = (p as any)[k];
-        return v === null || v === undefined || (typeof v === 'string' && v.trim().length === 0);
-    });
 }

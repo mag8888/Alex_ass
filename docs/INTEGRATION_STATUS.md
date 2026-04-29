@@ -25,14 +25,16 @@
 - ✅ CLI to issue API keys (`wm-issue-key.js`)
 - ✅ Webhook subscription registered: id `5576edeb-fd23-49f8-b8de-da21d55e939f` since 2026-04-29 08:32 UTC, `failureCount=0`
 
-### Wave Chat side (this repo)
+### Wave Chat side (this repo) — ALIGNED v1.2.0
+- ✅ Canon `docs/contract/openapi.yaml@1.2.0` — reality-aligned (mirrors deployed `apps/api/routes/wm.js`)
 - ✅ Generated typed client from spec (`src/wm/types.gen.ts` via `openapi-typescript`)
-- ✅ `src/wmClient.ts` — 6 methods, 10-min in-memory cache (by id + telegramId)
-- ✅ `POST /webhooks/wm` — HMAC verify (timestamp in **seconds**), anti-replay 300s, idempotency by eventId
-- ✅ Listener integration: pull profile → merge missing fields → after GPT extract, PATCH back to WM
-- ✅ CRM notes auto-emitted at QUALIFICATION→CLOSED (`ai_qualification_done`) and on match proposal (`ai_match_proposed`)
+- ✅ `src/wmClient.ts` — uses `tg:<id>` lookup, no `/by-telegram` endpoint, slim `UserListItem` for list, `WritableUserFields` for PATCH
+- ✅ `POST /webhooks/wm` — HMAC verify (timestamp in **seconds**), anti-replay 300s, idempotency by `X-WC-Delivery` (UUID)
+- ✅ Webhook handler parses Wave Match envelope: `{event, deliveryId, createdAt, data}` with wrapped `data.user` for user.* events
+- ✅ Listener: pulls WM profile, absorbs role/industry/location/hobbies into local fields, never tries to PATCH non-existent profile.* in WM
+- ✅ CRM notes use `kind=system` + `[ai_*]` prefix in `body` + label-tags (matches deployed contract)
+- ✅ `addCrmTag(userId, 'ai-profiling' | 'ai-qualified')` — soft signal to WM about AI-touched users (uses real PATCH endpoint with crmTags writable field)
 - ✅ Welcome flow (7-min delay after `user.created`)
-- ✅ Subscription change handlers (upgrade → admin TG congrats; cancellation → `ai_churn_signal` note)
 - ✅ Env aliases: `WAVE_CONNECT_*` and legacy `WM_*` both supported
 - ✅ End-to-end signed webhook test passes — `200 OK` on first try
 
@@ -71,6 +73,7 @@ Open coordination questions (not blocking, but should be answered):
 
 > Newest first. Format: `YYYY-MM-DD HH:MM UTC — [side] short summary (PR #N)`
 
+- `2026-04-29 ~13:00 UTC` — **WC**: ALIGNMENT v1.2.0 — canon, types, wmClient, webhook handler, listener, server, runbook all aligned to deployed Wave Match per `WAVE_CHAT_ALIGNMENT_TZ.md`. Breaking changes: User schema, PATCH body (`WritableUserFields`), CRM notes `kind+body`, webhook envelope `deliveryId+createdAt+wrapped data`, `tg:<id>` lookup instead of `/by-telegram`.
 - `2026-04-29 ~12:00 UTC` — **WC**: typed client generated from spec, `npm run gen:wm-types` script (PR #15)
 - `2026-04-29 ~11:55 UTC` — **WC**: `docs/contract/` published as canonical OpenAPI source-of-truth (PR #14)
 - `2026-04-29 ~11:50 UTC` — **WC**: admin's own messages now markAsRead before skipping — heartbeat ping works (PR #12)

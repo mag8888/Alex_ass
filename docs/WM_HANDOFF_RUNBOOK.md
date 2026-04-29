@@ -59,15 +59,18 @@ curl https://api-production-b682a.up.railway.app/api/wm/webhooks \
 
 ### Шаг 2. Триггернуть тестовое событие
 
-Любой `PATCH` любого тестового юзера эмиттнет `user.updated` или `profile.updated`:
+Любой `PATCH` тестового юзера эмиттнет `user.updated`:
 
 ```bash
+# Только writable-поля (profile.* НЕ принимаются — вернёт 400 readonly_field)
 curl -X PATCH https://api-production-b682a.up.railway.app/api/wm/users/<test_user_id> \
   -H "Authorization: Bearer <ваш_admin_token>" \
   -H "If-Match: <etag_from_GET>" \
   -H "Content-Type: application/json" \
-  -d '{"profile": {"city": "Москва"}}'
+  -d '{"crmTags": ["alignment-test-2026-04-29"]}'
 ```
+
+Полный список writable-полей: `email`, `phone`, `firstName`, `lastName`, `notifPrefs`, `marketingOptIn`, `marketingOptInUpdatedAt`, `crmTags`, `locale`. См. `WritableUserFields` в `docs/contract/openapi.yaml`.
 
 → В наших логах должно появиться:
 ```
