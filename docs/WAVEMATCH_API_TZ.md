@@ -405,6 +405,43 @@ on incoming message from user U:
 
 ---
 
+---
+
+## §10. Что передать команде Wave Chat для запуска интеграции
+
+После того как Wave Match выкатил API, нам (Wave Chat) нужно три значения, чтобы включить интеграцию. Их кладём в Railway → Variables:
+
+| Env переменная | Что | Откуда взять |
+|----------------|-----|--------------|
+| `WM_API_BASE_URL` | Базовый URL Wave Match API | например `https://api.wavematch.com` |
+| `WM_API_TOKEN` | Bearer-токен для нашего сервиса | сгенерировать на стороне WM: `node apps/api/scripts/wm-issue-key.js wave-chat-prod write` — **показать токен ровно один раз** |
+| `WM_WEBHOOK_SECRET` | HMAC-секрет для подписи webhook'ов | случайные 32 байта (`openssl rand -hex 32`); тот же секрет передать в WM при подписке через `POST /api/wm/webhooks` |
+
+**Опциональные:**
+| Env | Default | Что |
+|-----|---------|------|
+| `WM_TIMEOUT_MS` | 5000 | Таймаут на каждый запрос к WM |
+| `WM_CACHE_TTL_MS` | 600000 | TTL кэша профиля (10 мин) |
+| `WM_WELCOME_DELAY_MS` | 420000 | Задержка перед welcome-сообщением (7 мин) |
+
+**Пуш-URL для webhook'а** (Wave Match шлёт сюда события):
+```
+https://aiass-production.up.railway.app/webhooks/wm
+```
+Подписка делается одним запросом со стороны WM:
+```http
+POST /api/wm/webhooks
+{
+  "url": "https://aiass-production.up.railway.app/webhooks/wm",
+  "events": ["user.created", "user.updated", "profile.updated", "club.joined", "club.left", "subscription.changed"],
+  "secret": "<тот же WM_WEBHOOK_SECRET>"
+}
+```
+
+После этих 3 шагов интеграция работает: сразу же на `user.created` бот пишет welcome через 7 мин, а на каждое входящее в Telegram — подгружает профиль из Wave Match (с 10-мин кешем) и обновляет его обратно через PATCH когда узнаёт новые поля в диалоге.
+
+---
+
 **Контакты:** `<email лида проекта Wave Chat>`
 **Среда тестирования:** `https://aiass-production.up.railway.app/`
 **Repo Wave Chat:** `mag8888/AI_ASS` (приватный)

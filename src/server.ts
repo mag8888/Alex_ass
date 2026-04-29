@@ -15,11 +15,50 @@ import { notifyAdmin } from './notify';
 import { findMatches, connectUsers } from './match';
 import { seedScenarios } from './scenarios';
 import { previewBroadcast, sendBroadcast, backfillGender, findAudience, AudienceFilter } from './broadcast';
+import { isWMEnabled, ensureWebhookSubscription } from './wmClient';
+import { verifySignature, handleWMEvent } from './webhookHandler';
 
 const fastify = Fastify({ logger: true });
 
 // Enable CORS
 fastify.register(fastifyCors, { origin: true });
+
+// ── Wave Match webhook receiver ─────────────────────────────────────────────
+// HMAC must be verified over the RAW body string, so we capture it in a hook
+// before Fastify's default JSON parser runs.
+fastify.addHook('preParsing', async (req: any, _reply, payload) => {
+    if (req.routerPath === '/webhooks/wm' || req.url?.startsWith('/webhooks/wm')) {
+        let raw = '';
+        for await (const chunk of payload as any) raw += chunk.toString('utf8');
+        req.rawBody = raw;
+        // re-emit so default parser still gets the data
+        const { Readable } = require('stream');
+        return Readable.from(raw);
+    }
+    return payload;
+});
+
+fastify.post('/webhooks/wm', async (req: any, reply) => {
+    const signature = req.headers['x-wc-signature'] as string;
+    const timestamp = req.headers['x-wc-timestamp'] as string;
+    const eventId = (req.headers['x-wm-event-id'] || req.headers['x-wc-event-id']) as string;
+    const raw = req.rawBody || '';
+
+    const verify = verifySignature(raw, signature, timestamp);
+    if (!verify.ok) {
+        req.log.warn({ reason: verify.reason }, '[wm-webhook] signature verification failed');
+        return reply.code(401).send({ error: 'invalid signature', reason: verify.reason });
+    }
+
+    const evt = req.body as any;
+    const result = await handleWMEvent({
+        eventId: eventId || evt.eventId || `${evt.event}-${Date.now()}`,
+        event: evt.event,
+        occurredAt: evt.occurredAt,
+        data: evt.data || {},
+    });
+    return result.ok ? reply.code(200).send({ ok: true }) : reply.code(500).send(result);
+});
 
 // Simple in-memory log buffer
 const logBuffer: string[] = [];
@@ -297,10 +336,25 @@ fastify.post('/users/:aId/connect/:bId', async (req, reply) => {
 
         // Notify admin about the match
         const [a, b] = await Promise.all([
-            prisma.user.findUnique({ where: { id: Number(aId) }, select: { username: true, firstName: true } }),
-            prisma.user.findUnique({ where: { id: Number(bId) }, select: { username: true, firstName: true } }),
+            prisma.user.findUnique({ where: { id: Number(aId) }, select: { telegramId: true, username: true, firstName: true } }),
+            prisma.user.findUnique({ where: { id: Number(bId) }, select: { telegramId: true, username: true, firstName: true } }),
         ]);
         await notifyAdmin(`🤝 Match подготовлен: @${a?.username || aId} ↔ @${b?.username || bId}\nЧерновики готовы в обоих диалогах — проверь и отправь.`);
+
+        // Push CRM notes to Wave Match for both sides (best-effort, async fire-and-forget)
+        if (a?.telegramId && b?.telegramId) {
+            (async () => {
+                try {
+                    const { getUserByTelegramId, addNote } = await import('./wmClient');
+                    const [wmA, wmB] = await Promise.all([
+                        getUserByTelegramId(a.telegramId),
+                        getUserByTelegramId(b.telegramId),
+                    ]);
+                    if (wmA) await addNote(wmA.id, 'ai_match_proposed', `Предложен матч с @${b.username || b.telegramId}`, { tags: ['match'], linkedDialogId: String(result.aDialogueId) });
+                    if (wmB) await addNote(wmB.id, 'ai_match_proposed', `Предложен матч с @${a.username || a.telegramId}`, { tags: ['match'], linkedDialogId: String(result.bDialogueId) });
+                } catch (_) { }
+            })();
+        }
 
         return { success: true, ...result };
     } catch (e: any) {
@@ -1724,6 +1778,16 @@ const start = async () => {
         if (!process.env.TELEGRAM_API_ID) console.error('[STARTUP] ⚠️  TELEGRAM_API_ID is missing!');
         if (!process.env.TELEGRAM_API_HASH) console.error('[STARTUP] ⚠️  TELEGRAM_API_HASH is missing!');
         if (!process.env.ADMIN_USERNAME) console.warn('[STARTUP] ℹ️  ADMIN_USERNAME not set, defaulting to roman_arctur');
+
+        // Wave Match integration (graceful: warns, doesn't fail)
+        if (!isWMEnabled()) {
+            console.warn('[STARTUP] ℹ️  Wave Match API integration disabled (WM_API_BASE_URL or WM_API_TOKEN missing)');
+        } else {
+            console.log('[STARTUP] ✓ Wave Match API integration enabled');
+        }
+        if (!process.env.WM_WEBHOOK_SECRET) {
+            console.warn('[STARTUP] ⚠️  WM_WEBHOOK_SECRET missing — incoming WM webhooks will be rejected');
+        }
 
         // Debug Frontend Path
         const frontendPath = path.join(__dirname, '../frontend/dist');

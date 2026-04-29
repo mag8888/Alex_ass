@@ -13,6 +13,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, getAdminUsername } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
+import { getUserByTelegramId, patchUserProfile, addNote, isWMEnabled, WMUser } from './wmClient';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
 // Refresh every 30s so admin edits propagate without restart, but DB hits stay low.
@@ -171,6 +172,30 @@ export async function startListener(_page?: any) {
             console.log(`[Listener] Auto-promoted dialogue ${dialogue.id} to QUALIFICATION (first inbound)`);
         }
 
+        // ── Pull Wave Match profile (source-of-truth) and merge into local user ────
+        let wmUser: WMUser | null = null;
+        if (isWMEnabled()) {
+            wmUser = await getUserByTelegramId(user.telegramId);
+            if (wmUser) {
+                // Merge WM.profile into our local copy ONLY for fields that are empty locally.
+                // WM is source-of-truth, but we don't overwrite richer local data unless WM has it.
+                const p = wmUser.profile || {};
+                const merge: any = {};
+                for (const k of ['city', 'activity', 'businessCard', 'bestClients', 'requests', 'hobbies', 'currentIncome', 'desiredIncome', 'networkingGoal']) {
+                    const wmVal = (p as any)[k];
+                    const localVal = (user as any)[k];
+                    if (wmVal && (!localVal || String(localVal).trim() === '')) {
+                        merge[k] = wmVal;
+                    }
+                }
+                if (Object.keys(merge).length > 0) {
+                    await prisma.user.update({ where: { id: user.id }, data: merge });
+                    Object.assign(user, merge);
+                    console.log(`[wm] Merged ${Object.keys(merge).join(', ')} from Wave Match into local user`);
+                }
+            }
+        }
+
         // ── Per-user rules + history ────────────────────────────────────────
         const userRules = await prisma.rule.findMany({
             where: { userId: user.id, isActive: true },
@@ -221,12 +246,33 @@ export async function startListener(_page?: any) {
             if (Object.keys(safe).length > 0) {
                 await prisma.user.update({ where: { id: user.id }, data: safe });
                 console.log(`[Listener] Extracted profile fields: ${Object.keys(safe).join(', ')}`);
+
+                // ── Push the same fields to Wave Match (best-effort) ────────────
+                if (wmUser) {
+                    const updated = await patchUserProfile(wmUser.id, wmUser.etag, { profile: safe });
+                    if (updated) {
+                        console.log(`[wm] Synced ${Object.keys(safe).length} fields to Wave Match for ${wmUser.id}`);
+                    }
+                }
             }
         }
 
         if (gptResult.nextStage && gptResult.nextStage !== currentStage) {
             await prisma.dialogue.update({ where: { id: dialogue.id }, data: { stage: gptResult.nextStage } });
             console.log(`[Listener] Stage ${currentStage} → ${gptResult.nextStage}`);
+
+            // CRM note when qualification finishes
+            if (gptResult.nextStage === 'CLOSED' && wmUser) {
+                const summary = [
+                    user.activity && `Сфера: ${user.activity}`,
+                    user.requests && `Запросы: ${user.requests}`,
+                    user.city && `Город: ${user.city}`,
+                ].filter(Boolean).join(' · ');
+                await addNote(wmUser.id, 'ai_qualification_done', summary || 'Профиль заполнен в диалоге AI', {
+                    tags: ['qualified'],
+                    linkedDialogId: String(dialogue.id),
+                });
+            }
         }
 
         // ── Send (auto-mode) or stash as draft ──────────────────────────────
