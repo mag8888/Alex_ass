@@ -4,7 +4,7 @@ import { invalidateCache, addAiNote, type WMUser, type WMProfile } from './wmCli
 import { notifyAdmin } from './notify';
 import { ensureUserAndDialogue, sendMessageToUser, createDraftMessage } from './actions';
 import { generateResponse } from './gpt';
-import { applyGender } from './gender';
+import { applyGender, preferredFirstName } from './gender';
 
 const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
 // REPLAY_WINDOW in SECONDS (matches Wave Match spec: X-WC-Timestamp is Unix seconds)
@@ -128,7 +128,9 @@ async function sendWelcome(wm: WMUser) {
     // ── Gender-aware fallback ────────────────────────────────────────────
     // Used when the GPT call fails. Anchors with "ты регистрировался(-ась) у нас",
     // value in one breath, then ONE open question.
-    const firstName = wm.firstName || 'друг';
+    // Prefer WM firstName (canonical, set by user themselves) over the local
+    // value which might be a transliteration or ambiguous nickname.
+    const firstName = preferredFirstName(user.firstName, wm.firstName);
     const fallbackTpl =
         `${firstName}, привет! ` +
         `{Ты регистрировался|Ты регистрировалась|Вы регистрировались} у нас в Wave Match — мы помогаем находить нужных людей под твои запросы.\n` +

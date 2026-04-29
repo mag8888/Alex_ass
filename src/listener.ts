@@ -11,7 +11,7 @@ import { generateResponse } from "./gpt";
 import { DialogueStage } from '@prisma/client';
 import prisma from './db';
 import { emitEvent } from './events';
-import { notifyAdmin, getAdminUsername } from './notify';
+import { notifyAdmin, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
 import { getUserByTelegramId, addAiNote, addCrmTag, isWMEnabled, WMUser } from './wmClient';
 
@@ -153,14 +153,15 @@ export async function startListener(_page?: any) {
 
         // ── Notify admin about brand-new conversations once ─────────────────
         if (!user.notifiedNew) {
-            await notifyAdmin(`👋 Новый человек написал: @${username} (${user.firstName || ''})\n\n«${text.substring(0, 200)}»`);
+            const card = buildUserCard(user, { title: '👋 Новый человек написал' });
+            await notifyAdmin(`${card}\n\n«${text.substring(0, 200)}»`);
             await prisma.user.update({ where: { id: user.id }, data: { notifiedNew: true } });
         }
 
         // Forward LEAD messages so admin sees the live thread
         const LEAD_STATUSES = ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER'];
         if (LEAD_STATUSES.includes(user.status)) {
-            await notifyAdmin(`📩 Лид @${username}: ${text.substring(0, 300)}`, { silent: true });
+            await notifyAdmin(`📩 ${user.firstName || username} ${user.gender === 'FEMALE' ? '♀' : user.gender === 'MALE' ? '♂' : ''} @${username}: ${text.substring(0, 300)}`, { silent: true });
         }
 
         // ── Auto-trigger QUALIFICATION onboarding for new users ─────────────
@@ -192,10 +193,18 @@ export async function startListener(_page?: any) {
                 if (!user.hobbies && Array.isArray(p.hobbies) && p.hobbies.length > 0) {
                     merge.hobbies = p.hobbies.join(', ');
                 }
+                // Prefer WM's canonical firstName/lastName over local TG copy.
+                // E.g. local "Alex" → WM "Александр" (user-supplied full name).
+                if (wmUser.firstName && wmUser.firstName !== user.firstName) {
+                    merge.firstName = wmUser.firstName;
+                }
+                if (wmUser.lastName && wmUser.lastName !== user.lastName) {
+                    merge.lastName = wmUser.lastName;
+                }
                 if (Object.keys(merge).length > 0) {
                     await prisma.user.update({ where: { id: user.id }, data: merge });
                     Object.assign(user, merge);
-                    console.log(`[wm] Absorbed signals from WM profile: ${Object.keys(merge).join(', ')}`);
+                    console.log(`[wm] Absorbed from WM profile: ${Object.keys(merge).join(', ')}`);
                 }
             }
         }

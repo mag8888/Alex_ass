@@ -3,7 +3,8 @@ import { getClient } from "./client";
 import { MessageStatus, MessageSender } from '@prisma/client';
 import prisma from './db';
 import { emitEvent } from './events';
-import { notifyAdmin } from './notify';
+import { notifyAdmin, buildUserCard } from './notify';
+import { detectGender } from './gender';
 
 // --- DB Helpers ---
 
@@ -16,16 +17,18 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
     });
 
     if (!user) {
+        const inferredGender = detectGender(name);
         user = await prisma.user.create({
             data: {
                 telegramId: username,
                 username: username,
                 firstName: name,
                 status: 'NEW',
+                gender: inferredGender,
                 accessHash: accessHash || null
             }
         });
-        console.log(`[DB] Created new user: ${username}`);
+        console.log(`[DB] Created new user: ${username}${inferredGender !== 'UNKNOWN' ? ` (gender auto: ${inferredGender})` : ''}`);
 
     } else {
         // Update info if changed
@@ -33,6 +36,11 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
         if (user.firstName !== name) dataToUpdate.firstName = name;
         if (user.username !== username) dataToUpdate.username = username;
         if (accessHash && user.accessHash !== accessHash) dataToUpdate.accessHash = accessHash;
+        // Auto-detect gender for existing user if unknown
+        if (user.gender === 'UNKNOWN' && (name || user.firstName)) {
+            const inferredGender = detectGender(name || user.firstName);
+            if (inferredGender !== 'UNKNOWN') dataToUpdate.gender = inferredGender;
+        }
 
         if (Object.keys(dataToUpdate).length > 0) {
             user = await prisma.user.update({
@@ -85,11 +93,20 @@ export async function upgradeStatusOnSend(dialogueId: number) {
                 where: { dialogueId, sender: { in: ['OPERATOR', 'SIMULATOR'] } }
             });
             if (outCount >= 3) {
-                await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
+                const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
                 console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
                 emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
                 if (!user.notifiedLead) {
-                    await notifyAdmin(`🔥 Новый ЛИД: @${user.username || user.telegramId} (${user.firstName || ''})`);
+                    // Try to enrich with WM profile (from cache, no extra HTTP if already fetched)
+                    let wm = null;
+                    try {
+                        const { getUserByTelegramId, isWMEnabled } = await import('./wmClient');
+                        if (isWMEnabled() && updatedUser.telegramId) {
+                            wm = await getUserByTelegramId(updatedUser.telegramId, 'profile');
+                        }
+                    } catch (_) { }
+                    const card = buildUserCard(updatedUser, { title: '🔥 Новый ЛИД', wm });
+                    await notifyAdmin(card);
                     await prisma.user.update({ where: { id: user.id }, data: { notifiedLead: true } });
                 }
             }

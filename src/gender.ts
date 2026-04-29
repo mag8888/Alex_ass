@@ -60,6 +60,36 @@ export function detectGender(firstName?: string | null): Gender {
     return Gender.UNKNOWN;
 }
 
+// ── Friendly-name normalisation ─────────────────────────────────────────────
+// If a name is ambiguous (Alex/Sasha/Sania) or transliterated, replace with a
+// neutral short form so the bot doesn't pick the WRONG full name (Алексей vs
+// Александр, etc.). When the FULL canonical Russian name is known (e.g. from
+// Wave Match), pass it as `betterName` and we use that instead.
+const AMBIGUOUS_TO_NEUTRAL: Record<string, string> = {
+    alex: 'Алекс',
+    sasha: 'Саша',
+    sania: 'Саня',
+    sanya: 'Саня',
+    misha: 'Миша',
+    masha: 'Маша',
+    tasha: 'Таша',
+    natasha: 'Наташа',
+    katia: 'Катя',
+    katya: 'Катя',
+    ivan: 'Иван',
+    olga: 'Ольга',
+};
+
+export function preferredFirstName(rawName?: string | null, betterName?: string | null): string {
+    const better = (betterName || '').trim();
+    if (better) return better;
+    const raw = (rawName || '').trim();
+    if (!raw) return 'друг';
+    const lc = raw.toLowerCase();
+    if (AMBIGUOUS_TO_NEUTRAL[lc]) return AMBIGUOUS_TO_NEUTRAL[lc];
+    return raw;
+}
+
 // ── Gender-aware text expansion ─────────────────────────────────────────────
 // Templates use {m|f|u} blocks: "ты уже {зарегистрирован|зарегистрирована|зарегистрированы}"
 // Pattern: {malevariant|femalevariant} or {male|female|unknown}

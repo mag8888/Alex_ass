@@ -22,11 +22,16 @@ interface BroadcastModalProps {
 }
 
 const SCENARIO_LABELS: Record<string, string> = {
+    wm_welcome_after_registration: '👋 Welcome — после регистрации',
     wm_reactivation_general: '🔄 Реактивация — общий запрос',
-    wm_reactivation_clients_or_team: '🎯 Что важнее: клиенты или команда?',
-    wm_profile_completion: '📝 Дозаполнить профиль',
-    wm_specific_match_offer: '🤝 Есть кандидаты — познакомлю',
-    wm_soft_checkin: '☕ Мягкий check-in',
+    wm_reactivation_clients_or_team: '🎯 Клиенты или команда?',
+    wm_profile_completion: '📝 Меньше слов — точнее матч',
+    wm_specific_match_offer: '🤝 Есть кандидат — визитку?',
+    wm_soft_checkin: '☕ Тёплое касание',
+    wm_request_specialist: '🛠 Поиск специалиста',
+    wm_offer_to_introduce: '🪢 Предложение интро',
+    wm_revival_long_paused: '⏰ Долгая пауза — что нового',
+    wm_event_or_club_invite: '🎟 Клуб или event',
 };
 
 const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
