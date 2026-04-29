@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import type { Dialogue } from '../types';
 import { DialogueSource } from '../types';
+import { useEvents } from './useEvents';
 
 export const useChat = () => {
     const [dialogues, setDialogues] = useState<Dialogue[]>([]);
@@ -41,32 +42,39 @@ export const useChat = () => {
     }, []);
 
 
-    // Initial Load & Polling for List
+    // Initial Load + low-frequency safety poll (60s) — SSE handles immediate updates
     useEffect(() => {
         loadDialogues(false);
-        // Poll every 10s
-        const interval = setInterval(() => loadDialogues(true), 10000);
+        const interval = setInterval(() => loadDialogues(true), 60000);
         return () => clearInterval(interval);
     }, [loadDialogues]);
 
-    // Poll for Active Chat (Silent)
-    useEffect(() => {
-        if (!currentDialogue) return;
+    // Refetch active chat helper
+    const refetchActive = useCallback(async (dialogueId: number) => {
+        try {
+            const res = await fetch(`/dialogues/${dialogueId}`);
+            if (res.ok) {
+                const full: Dialogue = await res.json();
+                setCurrentDialogue(prev => (prev?.id === full.id ? full : prev));
+            }
+        } catch (e) { console.error(e); }
+    }, []);
 
-        const pollActiveChat = async () => {
-            try {
-                const res = await fetch(`/dialogues/${currentDialogue.id}`);
-                if (res.ok) {
-                    const full: Dialogue = await res.json();
-                    // Only update if necessary? For now just update to get new messages.
-                    setCurrentDialogue(full);
-                }
-            } catch (e) { console.error(e); }
-        };
-
-        const interval = setInterval(pollActiveChat, 5000);
-        return () => clearInterval(interval);
-    }, [currentDialogue?.id]);
+    // Real-time updates via SSE
+    useEvents((event) => {
+        if (event.type === 'dialogue:updated' || event.type === 'message:new' ||
+            event.type === 'message:draft' || event.type === 'message:sent') {
+            // Refresh sidebar list
+            loadDialogues(true);
+            // Refresh open chat if it matches
+            if ('dialogueId' in event && currentDialogue?.id === event.dialogueId) {
+                refetchActive(event.dialogueId);
+            }
+        }
+        if (event.type === 'user:status') {
+            loadDialogues(true);
+        }
+    });
 
     // Derived State: Filtered List
     const filteredDialogues = dialogues.filter(d => {
@@ -236,6 +244,39 @@ export const useChat = () => {
         }
     };
 
+    const toggleAutoMode = async (userId: number, enabled: boolean) => {
+        try {
+            await fetch(`/users/${userId}/auto-mode`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ enabled }),
+            });
+            if (currentDialogue) await selectChat(currentDialogue.id);
+            await loadDialogues(true);
+        } catch (e) {
+            console.error(e);
+            alert('Failed to toggle auto-mode');
+        }
+    };
+
+    const startOnboarding = async (dialogueId: number) => {
+        try {
+            setLoading(true);
+            const res = await fetch(`/dialogues/${dialogueId}/start-onboarding`, { method: 'POST' });
+            if (!res.ok) {
+                const err = await res.json();
+                throw new Error(err.error || 'Failed');
+            }
+            await selectChat(dialogueId);
+            await loadDialogues(true);
+        } catch (e: any) {
+            console.error(e);
+            alert(`Failed to start onboarding: ${e.message}`);
+        } finally {
+            setLoading(false);
+        }
+    };
+
     return {
         dialogues: filteredDialogues,
         currentDialogue,
@@ -257,5 +298,7 @@ export const useChat = () => {
         showRejected,
         setShowRejected,
         regenerateResponse,
+        toggleAutoMode,
+        startOnboarding,
     };
 };

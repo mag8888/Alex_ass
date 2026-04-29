@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { Dialogue } from '../types';
 import { useChat } from '../hooks/useChat';
 import ClientCard from './ClientCard';
-import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2 } from 'lucide-react';
+import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2, Bot, Sparkles } from 'lucide-react';
 
 // ─── Quick Templates ────────────────────────────────────────────────────
 const QUICK_TEMPLATES = [
@@ -106,6 +106,7 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
 
     const isRejected = dialogue.user.status === 'REJECTED';
     const isScout = dialogue.source === 'SCOUT';
+    const autoOn = !!dialogue.user.autoReply;
 
     return (
         <div className="flex flex-col h-full bg-background/50">
@@ -125,6 +126,23 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                     </div>
                 </div>
                 <div className="flex gap-2">
+                    <button
+                        onClick={() => actions.startOnboarding(dialogue.id)}
+                        className="text-xs px-3 py-1.5 rounded-md bg-emerald-500/10 text-emerald-600 hover:bg-emerald-500/20 flex items-center gap-1 font-medium"
+                        title="Запустить нетворкинг-онбординг (профилирование)"
+                    >
+                        <Sparkles className="w-3 h-3" /> Onboarding
+                    </button>
+                    <button
+                        onClick={() => actions.toggleAutoMode(dialogue.userId, !autoOn)}
+                        className={`text-xs px-3 py-1.5 rounded-md flex items-center gap-1 font-medium ${autoOn
+                            ? 'bg-indigo-500 text-white hover:bg-indigo-600'
+                            : 'bg-muted text-muted-foreground hover:bg-muted/80'}`}
+                        title={autoOn ? 'AI отвечает сам без подтверждения' : 'AI создаёт черновики'}
+                    >
+                        <Bot className="w-3 h-3" /> Auto {autoOn ? 'ON' : 'OFF'}
+                    </button>
+
                     {!isScout && (
                         <button
                             onClick={() => actions.updateDialogueSource(dialogue.id, 'SCOUT')}

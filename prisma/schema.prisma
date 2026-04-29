@@ -42,6 +42,11 @@ model User {
   networkingGoal  String?  // Context/Goal
   profileStatus   ProfileStatus @default(EMPTY)
 
+  // Automation flags
+  autoReply       Boolean  @default(false) // If true — listener sends GPT replies without operator approval
+  notifiedNew     Boolean  @default(false) // Admin already got "new lead" notification
+  notifiedLead    Boolean  @default(false) // Admin already got "promoted to LEAD" notification
+
   rules        Rule[]
 }
 

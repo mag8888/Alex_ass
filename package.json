@@ -16,6 +16,7 @@
   "author": "",
   "license": "ISC",
   "dependencies": {
+    "@anthropic-ai/sdk": "^0.91.1",
     "@fastify/cors": "^8.5.0",
     "@fastify/static": "^7.0.4",
     "@prisma/client": "5.10.2",

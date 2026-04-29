@@ -5,13 +5,14 @@ import Fastify from 'fastify';
 import path from 'path';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
-import { PrismaClient } from '@prisma/client';
+import prisma from './db';
 import { initClient, getClient, reconnectClient, getQR } from './client';
 import { sendMessageToUser, sendDraftMessage, scanChatForLeads, ensureUserAndDialogue, saveMessageToDb, createDraftMessage, sendReplyInChat, sendScoutDM } from './actions';
 import { generateResponse, analyzeText } from './gpt';
 import { startListener } from './listener';
+import { sseHandler, emitEvent } from './events';
+import { notifyAdmin } from './notify';
 
-const prisma = new PrismaClient();
 const fastify = Fastify({ logger: true });
 
 // Enable CORS
@@ -43,6 +44,98 @@ console.error = (...args) => {
 
 fastify.get('/logs', async (req, reply) => {
     return logBuffer;
+});
+
+// ── SSE: real-time updates for the admin UI ─────────────────────────────────
+fastify.get('/events', async (req, reply) => {
+    return sseHandler(req, reply);
+});
+
+// ── Auto-mode toggle: when on, listener auto-sends GPT replies ──────────────
+fastify.post('/users/:id/auto-mode', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { enabled } = req.body as { enabled: boolean };
+    try {
+        const user = await prisma.user.update({
+            where: { id: Number(id) },
+            data: { autoReply: !!enabled },
+        });
+        emitEvent({ type: 'user:status', userId: user.id, status: user.status });
+        return { success: true, user };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Force-start the scripted onboarding for a dialogue ──────────────────────
+// Switches stage to QUALIFICATION and asks the AI to fire the first profiling question.
+fastify.post('/dialogues/:id/start-onboarding', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+        const dialogue = await prisma.dialogue.findUnique({
+            where: { id: Number(id) },
+            include: { user: true },
+        });
+        if (!dialogue) return reply.code(404).send({ error: 'Not found' });
+
+        await prisma.dialogue.update({
+            where: { id: Number(id) },
+            data: { stage: 'QUALIFICATION', status: 'ACTIVE' },
+        });
+
+        const recent = await prisma.message.findMany({
+            where: { dialogueId: dialogue.id },
+            orderBy: { id: 'desc' },
+            take: 8,
+        });
+        const history = recent.reverse().map(m => ({ sender: m.sender, text: m.text }));
+
+        const rules = await prisma.rule.findMany({
+            where: { OR: [{ isGlobal: true }, { userId: dialogue.userId }], isActive: true },
+        });
+        const kbItems = await prisma.knowledgeItem.findMany();
+
+        const result = await generateResponse(
+            history,
+            'QUALIFICATION',
+            dialogue.user,
+            {},
+            kbItems.map(k => ({ question: k.question, answer: k.answer })),
+            'Начни онбординг по нетворкингу. Поприветствуй коротко и задай первый профилирующий вопрос.',
+            rules.map(r => r.content),
+        );
+
+        if (!result) return reply.code(500).send({ error: 'AI failed' });
+
+        await createDraftMessage(dialogue.id, result.reply);
+        return { success: true, reply: result.reply };
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Send a draft (used by ChatWindow's "Send Now" button) ───────────────────
+fastify.post('/messages/:id/send', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { text } = req.body as { text?: string };
+    try {
+        const result = await sendDraftMessage(null, parseInt(id), text);
+        return { success: true, result };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Delete a draft (discard AI proposal) ─────────────────────────────────────
+fastify.delete('/messages/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+        await prisma.message.delete({ where: { id: Number(id) } });
+        return { success: true };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
 });
 
 // Serve frontend
@@ -1466,9 +1559,12 @@ const start = async () => {
 
         // Env Checks
         if (!process.env.DATABASE_URL) console.error('[STARTUP] ⚠️  DATABASE_URL is missing!');
-        if (!process.env.OPENAI_API_KEY) console.error('[STARTUP] ⚠️  OPENAI_API_KEY is missing!');
+        if (!process.env.ANTHROPIC_API_KEY && !process.env.OPENAI_API_KEY) {
+            console.error('[STARTUP] ⚠️  Both ANTHROPIC_API_KEY and OPENAI_API_KEY missing — AI replies will fail!');
+        }
         if (!process.env.TELEGRAM_API_ID) console.error('[STARTUP] ⚠️  TELEGRAM_API_ID is missing!');
         if (!process.env.TELEGRAM_API_HASH) console.error('[STARTUP] ⚠️  TELEGRAM_API_HASH is missing!');
+        if (!process.env.ADMIN_USERNAME) console.warn('[STARTUP] ℹ️  ADMIN_USERNAME not set, defaulting to roman_arctur');
 
         // Debug Frontend Path
         const frontendPath = path.join(__dirname, '../frontend/dist');

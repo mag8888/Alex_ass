@@ -1,8 +1,9 @@
 import { Api } from "telegram";
 import { getClient } from "./client";
-import { PrismaClient, MessageStatus, MessageSender } from '@prisma/client';
-
-const prisma = new PrismaClient();
+import { MessageStatus, MessageSender } from '@prisma/client';
+import prisma from './db';
+import { emitEvent } from './events';
+import { notifyAdmin } from './notify';
 
 // --- DB Helpers ---
 
@@ -74,6 +75,7 @@ export async function upgradeStatusOnSend(dialogueId: number) {
         if (user.status === 'NEW') {
             await prisma.user.update({ where: { id: user.id }, data: { status: 'CHAT' } });
             console.log(`[DB] ${user.username} NEW → CHAT (first DM sent)`);
+            emitEvent({ type: 'user:status', userId: user.id, status: 'CHAT' });
             return;
         }
 
@@ -85,6 +87,11 @@ export async function upgradeStatusOnSend(dialogueId: number) {
             if (outCount >= 3) {
                 await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
                 console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
+                emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
+                if (!user.notifiedLead) {
+                    await notifyAdmin(`🔥 Новый ЛИД: @${user.username || user.telegramId} (${user.firstName || ''})`);
+                    await prisma.user.update({ where: { id: user.id }, data: { notifiedLead: true } });
+                }
             }
         }
     } catch (e) {
@@ -105,6 +112,7 @@ export async function saveMessageToDb(dialogueId: number, sender: MessageSender,
         ]);
 
         console.log(`[DB] Saved ${sender} message: "${text.substring(0, 20)}..."`);
+        emitEvent({ type: 'dialogue:updated', dialogueId });
         return msg;
     } catch (e) {
         console.error(`[DB] Failed to save message: ${e}`);
@@ -219,6 +227,7 @@ export async function sendMessageToUser(userId: number, text: string) {
         // Status upgrade: NEW→CHAT, CHAT→LEAD on 3rd send
         if (dialogueId) await upgradeStatusOnSend(dialogueId);
 
+        emitEvent({ type: 'message:sent', dialogueId, userId, text });
         return msg;
     } catch (e: any) {
         console.error('[ACTION] Failed to send message:', e);
@@ -241,6 +250,8 @@ export async function createDraftMessage(dialogueId: number, text: string) {
             data: { updatedAt: new Date() }
         })
     ]);
+    const dlg = await prisma.dialogue.findUnique({ where: { id: dialogueId }, select: { userId: true } });
+    if (dlg) emitEvent({ type: 'message:draft', dialogueId, userId: dlg.userId, text });
     return msg;
 }
 
