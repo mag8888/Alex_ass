@@ -1,11 +1,28 @@
 // ── Wave Match API client ───────────────────────────────────────────────────
-// Implements the contract from docs/WAVEMATCH_API_TZ.md (v1.1).
-// Graceful degradation: if WM_API_BASE_URL/WM_API_TOKEN are not set, ALL methods
-// return null/empty silently — listener flow still works in local-only mode.
+// Implements the contract from docs/contract/openapi.yaml (v1.1.2).
+// Types are GENERATED — never edit src/wm/types.gen.ts by hand.
+// Re-run `npm run gen:wm-types` whenever the spec changes.
+//
+// Graceful degradation: if WAVE_CONNECT_BASE_URL/WAVE_CONNECT_API_TOKEN aren't
+// set, ALL methods return null/empty silently; listener flow keeps working.
+
+import type { components, paths } from './wm/types.gen';
+
+// ── Re-export schema types under stable local names so callers don't have to
+// follow the deep components.schemas.X path. These names are kept stable across
+// spec versions; if the spec renames something, fix it here ONCE.
+export type WMUser = components['schemas']['User'];
+export type WMProfile = components['schemas']['UserProfile'];
+export type WMSubscription = components['schemas']['Subscription'];
+export type WMClubMembership = components['schemas']['ClubMembership'];
+export type WMStats = components['schemas']['Stats'];
+export type CrmNoteType = components['schemas']['CrmNoteType'];
+export type CrmNoteCreate = components['schemas']['CrmNoteCreate'];
+export type WebhookEventName = components['schemas']['WebhookEventName'];
 
 // Accept both naming conventions:
-//   WAVE_CONNECT_*  — used by the Wave Match team (their preferred prefix)
-//   WM_*            — short legacy names from initial spec
+//   WAVE_CONNECT_*  — Wave Match team's preferred prefix
+//   WM_*            — short legacy names
 const BASE_URL = (process.env.WAVE_CONNECT_BASE_URL || process.env.WM_API_BASE_URL || '').replace(/\/$/, '');
 const TOKEN = process.env.WAVE_CONNECT_API_TOKEN || process.env.WM_API_TOKEN || '';
 const TIMEOUT_MS = Number(process.env.WAVE_CONNECT_TIMEOUT_MS || process.env.WM_TIMEOUT_MS || 5000);
@@ -15,45 +32,7 @@ export function isWMEnabled(): boolean {
     return !!(BASE_URL && TOKEN);
 }
 
-// ── Types ────────────────────────────────────────────────────────────────────
-export interface WMProfile {
-    city?: string | null;
-    activity?: string | null;
-    businessCard?: string | null;
-    bestClients?: string | null;
-    requests?: string | null;
-    hobbies?: string | null;
-    currentIncome?: string | null;
-    desiredIncome?: string | null;
-    networkingGoal?: string | null;
-    tags?: string[];
-}
-
-export interface WMSubscription {
-    tier: 'FREE' | 'PRO' | 'PREMIUM';
-    status: 'ACTIVE' | 'PAUSED' | 'CANCELLED';
-    currentPeriodEnd?: string;
-    marketingOptIn?: boolean;
-}
-
-export interface WMUser {
-    id: string;
-    telegramId: string;
-    username?: string | null;
-    firstName?: string | null;
-    lastName?: string | null;
-    gender?: 'MALE' | 'FEMALE' | 'UNKNOWN' | null;
-    locale?: string;
-    registeredAt: string;
-    lastActiveAt?: string;
-    etag: string;
-    profile?: WMProfile;
-    clubs?: { slug: string; joinedAt: string; role: string }[];
-    subscription?: WMSubscription;
-    stats?: { lifetimeValue: number; matchesCount: number };
-}
-
-// ── In-memory cache (per telegramId / per id) ────────────────────────────────
+// ── In-memory cache (per id + per telegramId) ────────────────────────────────
 type CacheEntry = { user: WMUser; expiresAt: number };
 const cacheById = new Map<string, CacheEntry>();
 const cacheByTg = new Map<string, CacheEntry>();
@@ -91,7 +70,11 @@ async function request(path: string, init: RequestInit = {}): Promise<Response> 
     }
 }
 
-// ── Endpoints ────────────────────────────────────────────────────────────────
+// ── Endpoints (typed via paths['<route>']['<verb>']['responses'] etc) ───────
+
+type GetByTelegramQuery = NonNullable<
+    paths['/api/wm/users/by-telegram']['get']['parameters']['query']
+>;
 
 export async function getUserByTelegramId(telegramId: string, include = 'profile,subscription'): Promise<WMUser | null> {
     if (!isWMEnabled()) return null;
@@ -100,7 +83,9 @@ export async function getUserByTelegramId(telegramId: string, include = 'profile
     if (cached && cached.expiresAt > Date.now()) return cached.user;
 
     try {
-        const res = await request(`/api/wm/users/by-telegram?telegramId=${encodeURIComponent(telegramId)}&include=${include}`);
+        const qs: GetByTelegramQuery = { telegramId, include };
+        const params = new URLSearchParams(qs as Record<string, string>);
+        const res = await request(`/api/wm/users/by-telegram?${params}`);
         if (res.status === 404) return null;
         if (!res.ok) {
             console.error(`[wm] getUserByTelegramId ${res.status}`);
@@ -122,7 +107,7 @@ export async function getUserById(id: string, include = 'profile,subscription'):
     if (cached && cached.expiresAt > Date.now()) return cached.user;
 
     try {
-        const res = await request(`/api/wm/users/${encodeURIComponent(id)}?include=${include}`);
+        const res = await request(`/api/wm/users/${encodeURIComponent(id)}?include=${encodeURIComponent(include)}`);
         if (res.status === 404) return null;
         if (!res.ok) return null;
         const user = (await res.json()) as WMUser;
@@ -134,10 +119,11 @@ export async function getUserById(id: string, include = 'profile,subscription'):
     }
 }
 
-export interface PatchProfileInput {
-    profile?: Partial<WMProfile>;
-    gender?: 'MALE' | 'FEMALE' | 'UNKNOWN';
-}
+type PatchProfileBody = NonNullable<
+    paths['/api/wm/users/{id}']['patch']['requestBody']
+>['content']['application/json'];
+
+export type PatchProfileInput = PatchProfileBody;
 
 export async function patchUserProfile(id: string, etag: string, body: PatchProfileInput): Promise<WMUser | null> {
     if (!isWMEnabled()) return null;
@@ -148,7 +134,6 @@ export async function patchUserProfile(id: string, etag: string, body: PatchProf
             body: JSON.stringify(body),
         });
         if (res.status === 412) {
-            // ETag mismatch — invalidate cache so caller can retry with fresh user
             invalidateCache(id);
             console.warn(`[wm] patchUserProfile 412 for ${id} — concurrent edit, invalidated cache`);
             return null;
@@ -157,29 +142,21 @@ export async function patchUserProfile(id: string, etag: string, body: PatchProf
             console.error(`[wm] patchUserProfile ${res.status} for ${id}`);
             return null;
         }
-        const updated = (await res.json()) as WMUser;
-        setCache(updated);
-        return updated;
+        // Endpoint returns ack object; refetch the full user to keep cache hot
+        await res.json().catch(() => null);
+        const refreshed = await getUserById(id);
+        return refreshed;
     } catch (e: any) {
         console.error('[wm] patchUserProfile error:', e.message);
         return null;
     }
 }
 
-export interface ListUsersFilter {
-    subscriptionTier?: 'FREE' | 'PRO' | 'PREMIUM';
-    clubSlug?: string;
-    marketingOptIn?: boolean;
-    lastActiveBefore?: string; // ISO
-    lastActiveAfter?: string;
-    hasEmail?: boolean;
-    locale?: string;
-    minProfileCompleteness?: number;
-    cursor?: string;
-    pageSize?: number;
-}
+type ListUsersQuery = NonNullable<paths['/api/wm/users']['get']['parameters']['query']>;
+export type ListUsersFilter = ListUsersQuery;
+type ListUsersResp = paths['/api/wm/users']['get']['responses']['200']['content']['application/json'];
 
-export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: WMUser[]; cursor?: string }> {
+export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: WMUser[]; cursor?: string | null }> {
     if (!isWMEnabled()) return { items: [] };
     try {
         const qs = new URLSearchParams();
@@ -188,20 +165,12 @@ export async function listUsers(filter: ListUsersFilter = {}): Promise<{ items: 
         }
         const res = await request(`/api/wm/users?${qs.toString()}`);
         if (!res.ok) return { items: [] };
-        return await res.json();
+        return (await res.json()) as ListUsersResp;
     } catch (e: any) {
         console.error('[wm] listUsers error:', e.message);
         return { items: [] };
     }
 }
-
-export type CrmNoteType =
-    | 'ai_dialog'
-    | 'ai_qualification_done'
-    | 'ai_match_proposed'
-    | 'ai_match_accepted'
-    | 'ai_match_rejected'
-    | 'ai_churn_signal';
 
 export async function addNote(
     userId: string,
@@ -211,14 +180,15 @@ export async function addNote(
 ): Promise<boolean> {
     if (!isWMEnabled()) return false;
     try {
+        const body: CrmNoteCreate = {
+            type,
+            summary: summary.slice(0, 1000),
+            tags: options.tags,
+            linkedDialogId: options.linkedDialogId,
+        };
         const res = await request(`/api/wm/users/${encodeURIComponent(userId)}/notes`, {
             method: 'POST',
-            body: JSON.stringify({
-                type,
-                summary: summary.slice(0, 1000),
-                tags: options.tags,
-                linkedDialogId: options.linkedDialogId,
-            }),
+            body: JSON.stringify(body),
         });
         return res.ok;
     } catch (e: any) {
@@ -229,13 +199,18 @@ export async function addNote(
 
 // ── Webhook subscription management ──────────────────────────────────────────
 
-export async function ensureWebhookSubscription(callbackUrl: string, secret: string, events: string[]): Promise<boolean> {
+type WebhookSubscriptionCreate = components['schemas']['WebhookSubscriptionCreate'];
+
+export async function ensureWebhookSubscription(
+    callbackUrl: string,
+    secret: string,
+    events: WebhookEventName[],
+): Promise<boolean> {
     if (!isWMEnabled()) return false;
     try {
-        // First check if a subscription already exists for our URL
         const listRes = await request('/api/wm/webhooks');
         if (listRes.ok) {
-            const subs = await listRes.json() as Array<{ id: string; url: string; events: string[] }>;
+            const subs = (await listRes.json()) as Array<{ id: string; url: string }>;
             const mine = subs.find(s => s.url === callbackUrl);
             if (mine) {
                 console.log(`[wm] Webhook subscription already exists: ${mine.id}`);
@@ -243,9 +218,10 @@ export async function ensureWebhookSubscription(callbackUrl: string, secret: str
             }
         }
 
+        const body: WebhookSubscriptionCreate = { url: callbackUrl, events, secret };
         const createRes = await request('/api/wm/webhooks', {
             method: 'POST',
-            body: JSON.stringify({ url: callbackUrl, events, secret }),
+            body: JSON.stringify(body),
         });
         if (createRes.ok) {
             console.log('[wm] Webhook subscription created');
@@ -267,9 +243,9 @@ export const WM_PROFILE_KEYS: (keyof WMProfile)[] = [
 ];
 
 export function missingProfileFields(user: WMUser): (keyof WMProfile)[] {
-    const p = user.profile || {};
+    const p = user.profile || ({} as WMProfile);
     return WM_PROFILE_KEYS.filter(k => {
-        const v = p[k];
+        const v = (p as any)[k];
         return v === null || v === undefined || (typeof v === 'string' && v.trim().length === 0);
     });
 }

@@ -6,7 +6,8 @@
   "scripts": {
     "start": "ts-node src/server.ts",
     "dev": "ts-node src/server.ts",
-    "build": "tsc"
+    "build": "tsc",
+    "gen:wm-types": "openapi-typescript docs/contract/openapi.yaml -o src/wm/types.gen.ts"
   },
   "keywords": [
     "telegram",
@@ -33,6 +34,7 @@
   "devDependencies": {
     "@types/node": "^20.11.19",
     "@types/qrcode": "^1.5.6",
+    "openapi-typescript": "^7.13.0",
     "ts-node": "^10.9.2",
     "typescript": "^5.3.3"
   }
