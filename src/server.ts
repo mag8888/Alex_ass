@@ -385,6 +385,61 @@ fastify.get('/broadcast/stats', async (req, reply) => {
     }
 });
 
+// Resolve a list of @usernames to TG IDs and check Wave Match registration
+fastify.post('/admin/check-tg-users', async (req, reply) => {
+    const { usernames } = (req.body || {}) as { usernames: string[] };
+    if (!Array.isArray(usernames) || usernames.length === 0) {
+        return reply.code(400).send({ error: 'usernames array required' });
+    }
+    const client = getClient();
+    if (!client || !client.connected) return reply.code(503).send({ error: 'Telegram client not connected' });
+
+    const { getUserByTelegramId, isWMEnabled } = await import('./wmClient');
+
+    const results = await Promise.all(usernames.map(async (raw) => {
+        const username = raw.replace(/^@/, '').trim();
+        const out: any = { username };
+        try {
+            const entity = await client.getEntity(username);
+            const e = entity as any;
+            out.telegramId = String(e.id);
+            out.firstName = e.firstName || null;
+            out.lastName = e.lastName || null;
+            out.isBot = !!e.bot;
+        } catch (e: any) {
+            out.tgError = e.message;
+            return out;
+        }
+        if (!isWMEnabled()) {
+            out.wmError = 'WM API not configured';
+            return out;
+        }
+        try {
+            const wm = await getUserByTelegramId(out.telegramId, 'profile,subscription');
+            if (wm) {
+                out.registered = true;
+                out.wmId = wm.id;
+                out.wmFirstName = wm.firstName;
+                out.wmLastName = wm.lastName;
+                out.wmEmail = wm.email;
+                out.wmTier = wm.subscription?.tier;
+                out.wmLocale = wm.locale;
+                out.wmCrmTags = wm.crmTags;
+                out.wmRole = wm.profile?.role;
+                out.wmIndustry = wm.profile?.industry;
+                out.wmLocation = wm.profile?.location;
+                out.wmCompletion = wm.profile?.completion;
+            } else {
+                out.registered = false;
+            }
+        } catch (e: any) {
+            out.wmError = e.message;
+        }
+        return out;
+    }));
+    return { results };
+});
+
 // Backfill gender from firstName for all UNKNOWN users
 fastify.post('/broadcast/backfill-gender', async (req, reply) => {
     try {
