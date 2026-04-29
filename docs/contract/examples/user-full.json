@@ -1,0 +1,46 @@
+{
+  "id": "wm_user_a1b2c3",
+  "telegramId": "123456789",
+  "username": "ivan_petrov",
+  "firstName": "Иван",
+  "lastName": "Петров",
+  "gender": "MALE",
+  "phone": "+79991234567",
+  "email": "ivan@example.com",
+  "locale": "ru",
+  "registeredAt": "2024-09-12T14:23:00Z",
+  "lastActiveAt": "2026-04-29T10:14:00Z",
+  "etag": "W/\"42-abc123\"",
+
+  "profile": {
+    "city": "Москва",
+    "activity": "Маркетинг и реклама",
+    "businessCard": "Помогаю стартапам в B2B вырасти на 30% через таргет",
+    "bestClients": "DTC-бренды, edtech, fintech",
+    "requests": "Ищу таргетолога-фрилансера в команду",
+    "hobbies": "Лыжи, путешествия",
+    "currentIncome": "500к-1М",
+    "desiredIncome": "1М-3М",
+    "networkingGoal": "Найти 3 партнёров до конца квартала",
+    "tags": ["b2b", "marketing", "moscow"]
+  },
+
+  "clubs": [
+    { "slug": "b2b-pro", "joinedAt": "2024-10-01T09:00:00Z", "role": "MEMBER" },
+    { "slug": "moscow", "joinedAt": "2024-09-15T12:00:00Z", "role": "MEMBER" }
+  ],
+
+  "subscription": {
+    "tier": "PRO",
+    "status": "ACTIVE",
+    "currentPeriodStart": "2026-04-01T00:00:00Z",
+    "currentPeriodEnd": "2026-05-01T00:00:00Z",
+    "marketingOptIn": true
+  },
+
+  "stats": {
+    "lifetimeValue": 47800,
+    "matchesCount": 12,
+    "lastMatchAt": "2026-04-20T11:45:00Z"
+  }
+}

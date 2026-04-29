@@ -1,0 +1,13 @@
+{
+  "eventId": "evt_01HX8K5WJH4FUC",
+  "event": "profile.updated",
+  "occurredAt": "2026-04-29T08:34:51Z",
+  "data": {
+    "userId": "wm_user_a1b2c3",
+    "telegramId": "123456789",
+    "fields": {
+      "city": "Санкт-Петербург",
+      "activity": "FinTech / banking-as-a-service"
+    }
+  }
+}

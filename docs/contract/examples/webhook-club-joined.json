@@ -1,0 +1,10 @@
+{
+  "eventId": "evt_01HX8K5WJJ7CVD",
+  "event": "club.joined",
+  "occurredAt": "2026-04-29T09:10:00Z",
+  "data": {
+    "userId": "wm_user_a1b2c3",
+    "telegramId": "123456789",
+    "clubSlug": "b2b-pro"
+  }
+}

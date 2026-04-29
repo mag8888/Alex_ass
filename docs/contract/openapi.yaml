@@ -1,0 +1,660 @@
+openapi: 3.1.0
+info:
+  title: Wave Match × Wave Chat — Integration Contract
+  version: '1.1.2'
+  description: |
+    Single source of truth for the API contract between
+    **Wave Match** (platform / CRM) and **Wave Chat** (Telegram AI assistant).
+
+    Any change MUST land here as a PR before being implemented on either side.
+    The semver in `info.version` is bumped on every breaking change; minor
+    additions to optional fields are non-breaking.
+
+    Two services exposed:
+      - Wave Match REST API (this file — `servers[0]`) — pulled by Wave Chat
+      - Wave Chat Webhook receiver (this file — `servers[1]`) — pushed by Wave Match
+  contact:
+    name: Wave Chat owner
+    email: xqrmedia@gmail.com
+
+servers:
+  - url: https://api-production-b682a.up.railway.app
+    description: Wave Match production API (read+write by Wave Chat)
+  - url: https://aiass-production.up.railway.app
+    description: Wave Chat webhook receiver (push by Wave Match)
+
+tags:
+  - name: users
+    description: Wave Match users (CRM-backed)
+  - name: notes
+    description: CRM notes attached to users
+  - name: webhooks-mgmt
+    description: Webhook subscription management on Wave Match
+  - name: webhooks-receive
+    description: Webhook events delivered to Wave Chat
+
+security:
+  - bearerAuth: []
+
+# ─── Paths ────────────────────────────────────────────────────────────────────
+paths:
+  # =============================================================================
+  # Wave Match API — read+write (called BY Wave Chat)
+  # =============================================================================
+
+  /api/wm/users/by-telegram:
+    get:
+      tags: [users]
+      summary: Lookup user by Telegram ID or username
+      description: |
+        Fast path used on every incoming Telegram message. Wave Chat caches
+        the response for `WAVE_CONNECT_CACHE_TTL_MS` (default 10 min).
+      parameters:
+        - $ref: '#/components/parameters/IncludeQuery'
+        - in: query
+          name: telegramId
+          schema: { type: string }
+        - in: query
+          name: username
+          schema: { type: string }
+      responses:
+        '200':
+          description: User found
+          headers:
+            ETag:
+              schema: { type: string, example: 'W/"42-abc123"' }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '404': { $ref: '#/components/responses/NotFound' }
+        '401': { $ref: '#/components/responses/Unauthorized' }
+
+  /api/wm/users/{id}:
+    parameters:
+      - $ref: '#/components/parameters/UserIdPath'
+    get:
+      tags: [users]
+      summary: Get user by Wave Match ID
+      parameters:
+        - $ref: '#/components/parameters/IncludeQuery'
+      responses:
+        '200':
+          description: User
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/User' }
+        '404': { $ref: '#/components/responses/NotFound' }
+    patch:
+      tags: [users]
+      summary: Update soft profile fields
+      description: |
+        Optimistic concurrency: client MUST send `If-Match` with the ETag from
+        a recent `GET`. On 412 the client should refetch and retry.
+      parameters:
+        - in: header
+          name: If-Match
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                profile:
+                  $ref: '#/components/schemas/UserProfile'
+                gender:
+                  $ref: '#/components/schemas/Gender'
+              additionalProperties: false
+      responses:
+        '200':
+          description: Updated
+          headers:
+            ETag: { schema: { type: string } }
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [ok, updatedFields, etag]
+                properties:
+                  ok: { type: boolean, example: true }
+                  updatedFields:
+                    type: array
+                    items: { type: string, example: city }
+                  etag: { type: string }
+        '412': { $ref: '#/components/responses/PreconditionFailed' }
+        '422': { $ref: '#/components/responses/ValidationError' }
+
+  /api/wm/users:
+    get:
+      tags: [users]
+      summary: List users (filterable)
+      description: Used by Wave Chat for broadcast-audience selection.
+      parameters:
+        - in: query
+          name: subscriptionTier
+          schema: { $ref: '#/components/schemas/SubscriptionTier' }
+        - in: query
+          name: subscriptionStatus
+          schema: { $ref: '#/components/schemas/SubscriptionStatus' }
+        - in: query
+          name: clubSlug
+          schema: { type: string }
+        - in: query
+          name: marketingOptIn
+          schema: { type: boolean }
+        - in: query
+          name: lastActiveAfter
+          schema: { type: string, format: date-time }
+        - in: query
+          name: lastActiveBefore
+          schema: { type: string, format: date-time }
+        - in: query
+          name: hasEmail
+          schema: { type: boolean }
+        - in: query
+          name: hasTelegram
+          schema: { type: boolean }
+        - in: query
+          name: locale
+          schema: { type: string, example: ru }
+        - in: query
+          name: minProfileCompleteness
+          schema: { type: number, minimum: 0, maximum: 1 }
+        - in: query
+          name: cursor
+          schema: { type: string }
+        - in: query
+          name: pageSize
+          schema: { type: integer, minimum: 1, maximum: 500, default: 200 }
+      responses:
+        '200':
+          description: Page of users
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [items]
+                properties:
+                  items:
+                    type: array
+                    items: { $ref: '#/components/schemas/User' }
+                  cursor:
+                    type: string
+                    nullable: true
+
+  /api/wm/users/{id}/notes:
+    parameters:
+      - $ref: '#/components/parameters/UserIdPath'
+    post:
+      tags: [notes]
+      summary: Append a CRM note
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/CrmNoteCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/CrmNote' }
+    get:
+      tags: [notes]
+      summary: List CRM notes for a user
+      parameters:
+        - in: query
+          name: limit
+          schema: { type: integer, default: 20, maximum: 100 }
+        - in: query
+          name: type
+          schema: { type: string, description: 'Comma-separated CrmNoteType filter' }
+      responses:
+        '200':
+          description: List
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/CrmNote' }
+
+  /api/wm/webhooks:
+    get:
+      tags: [webhooks-mgmt]
+      summary: List active webhook subscriptions
+      responses:
+        '200':
+          description: Subscriptions
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: '#/components/schemas/WebhookSubscription' }
+    post:
+      tags: [webhooks-mgmt]
+      summary: Create a webhook subscription
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookSubscriptionCreate' }
+      responses:
+        '201':
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/WebhookSubscription' }
+
+  /api/wm/webhooks/{subscriptionId}:
+    parameters:
+      - in: path
+        name: subscriptionId
+        required: true
+        schema: { type: string }
+    delete:
+      tags: [webhooks-mgmt]
+      summary: Delete a webhook subscription
+      responses:
+        '204': { description: Deleted }
+        '404': { $ref: '#/components/responses/NotFound' }
+
+  # =============================================================================
+  # Wave Chat receiver — pushed BY Wave Match
+  # =============================================================================
+  /webhooks/wm:
+    post:
+      tags: [webhooks-receive]
+      summary: Receive a Wave Match webhook event
+      description: |
+        Wave Match POSTs here for each subscribed event. Signed via HMAC-SHA256.
+
+        ### HMAC payload format
+        ```
+        message = `${X-WC-Timestamp}.${rawBody}`
+        signature = sha256_hex(secret, message)
+        header X-WC-Signature: sha256=<signature>
+        ```
+
+        ### Rules
+        - `X-WC-Timestamp` is **Unix epoch seconds** (NOT milliseconds).
+        - Replay window: 300 seconds (configurable via `WAVE_CONNECT_WEBHOOK_REPLAY_WINDOW`).
+        - Idempotency: receiver dedupes by `X-WC-Event-Id`.
+        - Receiver responds with **200 OK** within ≤ 5 sec on success.
+        - On any other status, sender retries: 1m → 5m → 30m → 2h → 6h → 24h, then dead-lettered.
+      security: []
+      parameters:
+        - in: header
+          name: X-WC-Signature
+          required: true
+          schema: { type: string, example: 'sha256=4f3a...' }
+        - in: header
+          name: X-WC-Timestamp
+          required: true
+          schema: { type: integer, description: 'Unix epoch SECONDS' }
+        - in: header
+          name: X-WC-Event-Id
+          required: true
+          schema: { type: string }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/WebhookEvent' }
+      responses:
+        '200':
+          description: Accepted
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  ok: { type: boolean, example: true }
+        '401':
+          description: Signature invalid / timestamp out of window
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  error: { type: string, example: invalid signature }
+                  reason: { type: string, example: 'timestamp skew 320s > 300s' }
+
+# ─── Components ───────────────────────────────────────────────────────────────
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: opaque
+      description: Service-account token issued by Wave Match (`wm-issue-key.js`).
+
+  parameters:
+    UserIdPath:
+      in: path
+      name: id
+      required: true
+      schema: { type: string, example: wm_user_a1b2c3 }
+    IncludeQuery:
+      in: query
+      name: include
+      description: Comma-separated extra layers to load.
+      schema:
+        type: string
+        default: profile
+        example: profile,clubs,subscription,stats
+
+  responses:
+    Unauthorized:
+      description: Missing or invalid Bearer token
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: unauthorized }
+    NotFound:
+      description: Entity not found
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: not_found }
+    PreconditionFailed:
+      description: ETag in If-Match did not match current resource version
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: etag_mismatch }
+    ValidationError:
+      description: Request body validation failed
+      content:
+        application/json:
+          schema:
+            type: object
+            properties:
+              error: { type: string, example: invalid_input }
+              details:
+                type: array
+                items:
+                  type: object
+                  properties:
+                    field: { type: string }
+                    message: { type: string }
+
+  schemas:
+    # Enums
+    Gender:
+      type: string
+      enum: [MALE, FEMALE, UNKNOWN]
+    SubscriptionTier:
+      type: string
+      enum: [FREE, PRO, PREMIUM]
+    SubscriptionStatus:
+      type: string
+      enum: [ACTIVE, PAUSED, CANCELLED]
+    Locale:
+      type: string
+      enum: [ru, en]
+
+    CrmNoteType:
+      type: string
+      enum:
+        - ai_dialog
+        - ai_qualification_done
+        - ai_match_proposed
+        - ai_match_accepted
+        - ai_match_rejected
+        - ai_churn_signal
+        - manual
+
+    # User profile fields editable from both sides
+    UserProfile:
+      type: object
+      additionalProperties: false
+      properties:
+        city: { type: string, nullable: true }
+        activity: { type: string, nullable: true, description: Sphere of activity }
+        businessCard: { type: string, nullable: true }
+        bestClients: { type: string, nullable: true }
+        requests: { type: string, nullable: true }
+        hobbies: { type: string, nullable: true }
+        currentIncome: { type: string, nullable: true }
+        desiredIncome: { type: string, nullable: true }
+        networkingGoal: { type: string, nullable: true }
+        tags:
+          type: array
+          items: { type: string }
+
+    Subscription:
+      type: object
+      properties:
+        tier: { $ref: '#/components/schemas/SubscriptionTier' }
+        status: { $ref: '#/components/schemas/SubscriptionStatus' }
+        currentPeriodStart: { type: string, format: date-time }
+        currentPeriodEnd: { type: string, format: date-time }
+        marketingOptIn: { type: boolean }
+
+    ClubMembership:
+      type: object
+      properties:
+        slug: { type: string, example: b2b-pro }
+        joinedAt: { type: string, format: date-time }
+        role: { type: string, enum: [MEMBER, MODERATOR, ADMIN] }
+
+    Stats:
+      type: object
+      properties:
+        lifetimeValue: { type: number, example: 47800 }
+        matchesCount: { type: integer, example: 12 }
+        lastMatchAt: { type: string, format: date-time, nullable: true }
+
+    User:
+      type: object
+      required: [id, telegramId, registeredAt, etag]
+      properties:
+        id: { type: string, example: wm_user_a1b2c3 }
+        telegramId: { type: string, example: '123456789' }
+        username: { type: string, nullable: true, example: ivan_petrov }
+        firstName: { type: string, nullable: true }
+        lastName: { type: string, nullable: true }
+        gender: { $ref: '#/components/schemas/Gender' }
+        phone: { type: string, nullable: true, format: phone }
+        email: { type: string, nullable: true, format: email }
+        locale: { $ref: '#/components/schemas/Locale' }
+        registeredAt: { type: string, format: date-time }
+        lastActiveAt: { type: string, format: date-time, nullable: true }
+        etag: { type: string, example: 'W/"42-abc123"' }
+        profile: { $ref: '#/components/schemas/UserProfile' }
+        clubs:
+          type: array
+          items: { $ref: '#/components/schemas/ClubMembership' }
+        subscription: { $ref: '#/components/schemas/Subscription' }
+        stats: { $ref: '#/components/schemas/Stats' }
+
+    # CRM notes
+    CrmNoteCreate:
+      type: object
+      required: [type, summary]
+      properties:
+        type: { $ref: '#/components/schemas/CrmNoteType' }
+        summary: { type: string, maxLength: 1000 }
+        tags:
+          type: array
+          items: { type: string }
+        linkedDialogId: { type: string }
+
+    CrmNote:
+      allOf:
+        - $ref: '#/components/schemas/CrmNoteCreate'
+        - type: object
+          required: [id, createdAt, authorId]
+          properties:
+            id: { type: string }
+            createdAt: { type: string, format: date-time }
+            authorId: { type: string, description: 'Service-account or human user ID' }
+
+    # Webhook subscription
+    WebhookEventName:
+      type: string
+      enum:
+        - user.created
+        - user.updated
+        - profile.updated
+        - club.joined
+        - club.left
+        - subscription.changed
+
+    WebhookSubscriptionCreate:
+      type: object
+      required: [url, events, secret]
+      properties:
+        url:
+          type: string
+          format: uri
+          example: https://aiass-production.up.railway.app/webhooks/wm
+        events:
+          type: array
+          minItems: 1
+          items: { $ref: '#/components/schemas/WebhookEventName' }
+        secret:
+          type: string
+          minLength: 32
+          description: HMAC secret used to sign deliveries.
+
+    WebhookSubscription:
+      allOf:
+        - $ref: '#/components/schemas/WebhookSubscriptionCreate'
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id: { type: string }
+            createdAt: { type: string, format: date-time }
+            failureCount: { type: integer, default: 0 }
+            lastSuccessAt: { type: string, format: date-time, nullable: true }
+            secret:
+              type: string
+              writeOnly: true
+              description: Never returned in responses; encrypted at rest.
+
+    # Webhook event payloads
+    WebhookEventBase:
+      type: object
+      required: [eventId, event, occurredAt, data]
+      properties:
+        eventId: { type: string, example: evt_a1b2c3 }
+        event: { $ref: '#/components/schemas/WebhookEventName' }
+        occurredAt: { type: string, format: date-time }
+
+    WebhookEvent:
+      oneOf:
+        - $ref: '#/components/schemas/WebhookEvent_UserCreated'
+        - $ref: '#/components/schemas/WebhookEvent_UserUpdated'
+        - $ref: '#/components/schemas/WebhookEvent_ProfileUpdated'
+        - $ref: '#/components/schemas/WebhookEvent_ClubJoined'
+        - $ref: '#/components/schemas/WebhookEvent_ClubLeft'
+        - $ref: '#/components/schemas/WebhookEvent_SubscriptionChanged'
+      discriminator:
+        propertyName: event
+        mapping:
+          user.created: '#/components/schemas/WebhookEvent_UserCreated'
+          user.updated: '#/components/schemas/WebhookEvent_UserUpdated'
+          profile.updated: '#/components/schemas/WebhookEvent_ProfileUpdated'
+          club.joined: '#/components/schemas/WebhookEvent_ClubJoined'
+          club.left: '#/components/schemas/WebhookEvent_ClubLeft'
+          subscription.changed: '#/components/schemas/WebhookEvent_SubscriptionChanged'
+
+    WebhookEvent_UserCreated:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [user.created] }
+            data:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                telegramId: { type: string, nullable: true }
+                username: { type: string, nullable: true }
+                firstName: { type: string, nullable: true }
+                locale: { $ref: '#/components/schemas/Locale' }
+
+    WebhookEvent_UserUpdated:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [user.updated] }
+            data:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                telegramId: { type: string, nullable: true }
+                changedFields:
+                  type: array
+                  items: { type: string }
+
+    WebhookEvent_ProfileUpdated:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [profile.updated] }
+            data:
+              type: object
+              required: [userId]
+              properties:
+                userId: { type: string }
+                telegramId: { type: string, nullable: true }
+                fields: { $ref: '#/components/schemas/UserProfile' }
+
+    WebhookEvent_ClubJoined:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [club.joined] }
+            data:
+              type: object
+              required: [userId, clubSlug]
+              properties:
+                userId: { type: string }
+                telegramId: { type: string, nullable: true }
+                clubSlug: { type: string }
+
+    WebhookEvent_ClubLeft:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [club.left] }
+            data:
+              type: object
+              required: [userId, clubSlug]
+              properties:
+                userId: { type: string }
+                clubSlug: { type: string }
+
+    WebhookEvent_SubscriptionChanged:
+      allOf:
+        - $ref: '#/components/schemas/WebhookEventBase'
+        - type: object
+          properties:
+            event: { type: string, enum: [subscription.changed] }
+            data:
+              type: object
+              required: [userId, oldTier, newTier, status]
+              properties:
+                userId: { type: string }
+                telegramId: { type: string, nullable: true }
+                oldTier: { $ref: '#/components/schemas/SubscriptionTier' }
+                newTier: { $ref: '#/components/schemas/SubscriptionTier' }
+                status: { $ref: '#/components/schemas/SubscriptionStatus' }

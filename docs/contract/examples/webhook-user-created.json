@@ -1,0 +1,12 @@
+{
+  "eventId": "evt_01HX8K5WJF9RAS",
+  "event": "user.created",
+  "occurredAt": "2026-04-29T08:14:00Z",
+  "data": {
+    "userId": "wm_user_a1b2c3",
+    "telegramId": "123456789",
+    "username": "ivan_petrov",
+    "firstName": "Иван",
+    "locale": "ru"
+  }
+}
