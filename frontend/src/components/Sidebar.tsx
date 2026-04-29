@@ -1,6 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useChat } from '../hooks/useChat';
-import { Search, RotateCw, Plus, MessageSquare, Binoculars } from 'lucide-react';
+import { Search, RotateCw, Plus, MessageSquare, Binoculars, Megaphone } from 'lucide-react';
+import BroadcastModal from './BroadcastModal';
 import { DialogueSource, UserStatus } from '../types';
 import { getScoutChats, addScoutChat } from '../api';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -25,6 +26,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
     const [scoutChats, setScoutChats] = useState<ScannedChat[]>([]);
     const [newChatLink, setNewChatLink] = useState('');
     const [showAddChat, setShowAddChat] = useState(false);
+    const [showBroadcast, setShowBroadcast] = useState(false);
 
     const {
         dialogues,
@@ -113,6 +115,13 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                                     onChange={(e) => setSearch(e.target.value)}
                                 />
                             </div>
+                            <button
+                                onClick={() => setShowBroadcast(true)}
+                                className="p-2 hover:bg-orange-500/10 rounded-md transition-colors text-orange-500"
+                                title="Рассылка по базе"
+                            >
+                                <Megaphone className="h-5 w-5" />
+                            </button>
                             <button
                                 onClick={syncChats}
                                 disabled={loading}
@@ -258,6 +267,8 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                     <div className="p-8 text-center text-muted-foreground text-sm">No scout chats yet. Add one!</div>
                 )}
             </div>
+
+            {showBroadcast && <BroadcastModal onClose={() => setShowBroadcast(false)} />}
 
             {/* Connection Status Footer */}
             <div className="p-3 border-t border-border bg-muted/30 text-xs safe-bottom">

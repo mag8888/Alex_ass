@@ -45,7 +45,20 @@ model User {
   notifiedNew     Boolean  @default(false) // Admin already got "new lead" notification
   notifiedLead    Boolean  @default(false) // Admin already got "promoted to LEAD" notification
 
+  // Demographics (auto-derived from firstName for RU names; can be overridden)
+  gender          Gender   @default(UNKNOWN)
+
+  // Outreach throttling
+  lastBroadcastAt DateTime?    // last time we sent them a Broadcast template
+  lastBroadcastTemplateId Int?
+
   rules        Rule[]
+}
+
+enum Gender {
+  MALE
+  FEMALE
+  UNKNOWN
 }
 
 model ScannedChat {

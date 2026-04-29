@@ -13,6 +13,8 @@ import { startListener } from './listener';
 import { sseHandler, emitEvent } from './events';
 import { notifyAdmin } from './notify';
 import { findMatches, connectUsers } from './match';
+import { seedScenarios } from './scenarios';
+import { previewBroadcast, sendBroadcast, backfillGender, findAudience, AudienceFilter } from './broadcast';
 
 const fastify = Fastify({ logger: true });
 
@@ -148,6 +150,70 @@ fastify.get('/users/:id/matches', async (req, reply) => {
         return { matches };
     } catch (e: any) {
         req.log.error(e);
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Broadcast: outreach to existing users with templated scenarios ──────────
+fastify.get('/broadcast/templates', async (req, reply) => {
+    const templates = await prisma.template.findMany({ orderBy: { name: 'asc' } });
+    return templates;
+});
+
+// Update template content (admin tweaks scenario wording)
+fastify.put('/broadcast/templates/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { content } = req.body as { content: string };
+    if (!content || content.length < 10) return reply.code(400).send({ error: 'content too short' });
+    try {
+        const tpl = await prisma.template.update({
+            where: { id: Number(id) },
+            data: { content },
+        });
+        return tpl;
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Preview audience + rendered messages
+fastify.post('/broadcast/preview', async (req, reply) => {
+    const { templateId, filter } = (req.body || {}) as { templateId: number; filter?: AudienceFilter };
+    if (!templateId) return reply.code(400).send({ error: 'templateId required' });
+    try {
+        const items = await previewBroadcast(templateId, filter || {});
+        return { count: items.length, items };
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Send: create drafts (or auto-send) for selected users
+fastify.post('/broadcast/send', async (req, reply) => {
+    const body = (req.body || {}) as { templateId: number; userIds: number[]; mode?: 'draft' | 'auto' };
+    if (!body.templateId || !Array.isArray(body.userIds) || body.userIds.length === 0) {
+        return reply.code(400).send({ error: 'templateId + non-empty userIds required' });
+    }
+    try {
+        const result = await sendBroadcast({
+            templateId: body.templateId,
+            userIds: body.userIds,
+            mode: body.mode === 'auto' ? 'auto' : 'draft',
+        });
+        return result;
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Backfill gender from firstName for all UNKNOWN users
+fastify.post('/broadcast/backfill-gender', async (req, reply) => {
+    try {
+        const result = await backfillGender();
+        return result;
+    } catch (e: any) {
         return reply.code(500).send({ error: e.message });
     }
 });
@@ -1605,6 +1671,10 @@ const start = async () => {
         try {
             await prisma.$connect();
             console.log('[STARTUP] Database connected.');
+
+            // Seed broadcast scenarios + backfill gender from names
+            try { await seedScenarios(); } catch (e) { console.error('[STARTUP] seedScenarios failed:', e); }
+            try { await backfillGender(); } catch (e) { console.error('[STARTUP] backfillGender failed:', e); }
         } catch (dbErr) {
             console.error('[STARTUP] ⚠️ Database connection failed (Non-critical for some features):', dbErr);
         }
