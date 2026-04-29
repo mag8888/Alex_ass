@@ -99,7 +99,10 @@ export const useChat = () => {
         return true;
     });
 
+    const clearCurrentChat = () => setCurrentDialogue(null);
+
     const selectChat = async (id: number) => {
+        if (id === 0) { clearCurrentChat(); return; }
         console.log('[DEBUG] selectChat called for ID:', id);
         // Clear new-dialogue highlight when user opens it
         setNewDialogueIds(prev => { const next = new Set(prev); next.delete(id); return next; });

@@ -12,6 +12,7 @@ import { generateResponse, analyzeText } from './gpt';
 import { startListener } from './listener';
 import { sseHandler, emitEvent } from './events';
 import { notifyAdmin } from './notify';
+import { findMatches, connectUsers } from './match';
 
 const fastify = Fastify({ logger: true });
 
@@ -134,6 +135,42 @@ fastify.delete('/messages/:id', async (req, reply) => {
         await prisma.message.delete({ where: { id: Number(id) } });
         return { success: true };
     } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Match Engine: find candidates for connection ────────────────────────────
+fastify.get('/users/:id/matches', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { limit } = req.query as { limit?: string };
+    try {
+        const matches = await findMatches(Number(id), Math.min(parseInt(limit || '5'), 20));
+        return { matches };
+    } catch (e: any) {
+        req.log.error(e);
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// ── Connect two users: drafts on both sides + MATCHED status ────────────────
+fastify.post('/users/:aId/connect/:bId', async (req, reply) => {
+    const { aId, bId } = req.params as { aId: string; bId: string };
+    const { intro } = (req.body || {}) as { intro?: string };
+    try {
+        const result = await connectUsers(Number(aId), Number(bId), intro);
+        emitEvent({ type: 'dialogue:updated', dialogueId: result.aDialogueId });
+        emitEvent({ type: 'dialogue:updated', dialogueId: result.bDialogueId });
+
+        // Notify admin about the match
+        const [a, b] = await Promise.all([
+            prisma.user.findUnique({ where: { id: Number(aId) }, select: { username: true, firstName: true } }),
+            prisma.user.findUnique({ where: { id: Number(bId) }, select: { username: true, firstName: true } }),
+        ]);
+        await notifyAdmin(`🤝 Match подготовлен: @${a?.username || aId} ↔ @${b?.username || bId}\nЧерновики готовы в обоих диалогах — проверь и отправь.`);
+
+        return { success: true, ...result };
+    } catch (e: any) {
+        req.log.error(e);
         return reply.code(500).send({ error: e.message });
     }
 });

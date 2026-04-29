@@ -81,9 +81,9 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
     };
 
     return (
-        <div className="flex flex-col h-full bg-card border-r border-border">
+        <div className="flex flex-col h-full bg-card md:border-r md:border-border">
             {/* Tabs */}
-            <div className="flex border-b border-border">
+            <div className="flex border-b border-border safe-top">
                 <button
                     onClick={() => handleTabChange('chats')}
                     className={`flex-1 py-3 text-sm font-medium flex items-center justify-center gap-2 border-b-2 transition-colors ${activeTab === 'chats' ? 'border-primary text-primary' : 'border-transparent text-muted-foreground hover:text-foreground'}`}
@@ -260,10 +260,10 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
             </div>
 
             {/* Connection Status Footer */}
-            <div className="p-3 border-t border-border bg-muted/30 text-xs">
+            <div className="p-3 border-t border-border bg-muted/30 text-xs safe-bottom">
                 <div className="flex justify-between items-center mb-2">
                     <StatusIndicator />
-                    <span className="text-[10px] text-muted-foreground opacity-50">v1.2</span>
+                    <span className="text-[10px] text-muted-foreground opacity-50">v1.3</span>
                 </div>
             </div>
         </div>
