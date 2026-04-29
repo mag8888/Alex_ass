@@ -4,6 +4,7 @@ import { invalidateCache, addAiNote, type WMUser, type WMProfile } from './wmCli
 import { notifyAdmin } from './notify';
 import { ensureUserAndDialogue, sendMessageToUser, createDraftMessage } from './actions';
 import { generateResponse } from './gpt';
+import { applyGender } from './gender';
 
 const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
 // REPLAY_WINDOW in SECONDS (matches Wave Match spec: X-WC-Timestamp is Unix seconds)
@@ -124,25 +125,49 @@ async function sendWelcome(wm: WMUser) {
         'INBOUND',
     );
 
+    // ── Gender-aware fallback ────────────────────────────────────────────
+    // Used when the GPT call fails. Anchors with "ты регистрировался(-ась) у нас",
+    // value in one breath, then ONE open question.
+    const firstName = wm.firstName || 'друг';
+    const fallbackTpl =
+        `${firstName}, привет! ` +
+        `{Ты регистрировался|Ты регистрировалась|Вы регистрировались} у нас в Wave Match — мы помогаем находить нужных людей под твои запросы.\n` +
+        `Расскажи в двух словах: что сейчас актуально — клиенты, партнёры или спецы под задачу? Дальше я подберу подходящих людей из базы. Можно голосом 🎙️`;
+    const fallbackText = applyGender(fallbackTpl, user.gender);
+
+    // ── GPT instructions: explicit anti-spam framing ─────────────────────
+    const customInstructions = [
+        'CONTEXT: This is the FIRST outreach to a Wave Match user who just completed registration on the platform.',
+        'The user has NOT messaged the bot before — they may be confused why a stranger is DM-ing them.',
+        '',
+        'CRITICAL: the message must NOT feel like cold spam. Required structure (2-4 short lines, in this order):',
+        '1) "{firstName}, привет!" (no "Здравствуйте", no "Уважаемый")',
+        `2) Anchor: explicitly remind them they REGISTERED on Wave Match. Use the correct gendered form: ${user.gender === 'FEMALE' ? '"ты регистрировалась у нас в Wave Match"' : user.gender === 'MALE' ? '"ты регистрировался у нас в Wave Match"' : '"вы регистрировались у нас в Wave Match"'}.`,
+        '3) Value in one phrase: "помогаем найти нужных людей под твои запросы" (or natural variation).',
+        '4) ONE open question: что сейчас актуально / какие запросы есть / нужны клиенты, партнёры, исполнители.',
+        '5) End with a SOFT voice option: "можно голосом 🎙️" — never push.',
+        '',
+        'Keep it short (40-70 words). No corporate tone. No menus. No follow-up questions in the same message.',
+    ].join('\n');
+
     const result = await generateResponse(
-        [{ sender: 'USER', text: '(новая регистрация на Wave Match — поприветствуй, спроси про текущие запросы)' }],
+        [], // No history — this is the very first message
         'DISCOVERY',
         user,
         {},
         [],
-        'Юзер только что зарегистрировался на Wave Match. Поприветствуй коротко (1-2 предложения), скажи что я Wave Match, и спроси одним открытым вопросом — какие сейчас актуальные запросы (клиенты, команда, партнёры). Можно намекнуть что отвечать удобно голосом.',
+        customInstructions,
         [],
     );
 
-    const text = result?.reply
-        || `Привет, ${wm.firstName || 'друг'}! Это Wave Match. Расскажи, какие у тебя сейчас актуальные запросы — может, нужны клиенты или партнёры? Можно голосом 🎙️`;
+    const text = result?.reply || fallbackText;
 
     if (user.autoReply) {
         await sendMessageToUser(user.id, text);
     } else {
         await createDraftMessage(dialogue.id, text);
     }
-    await notifyAdmin(`👋 Welcome к новому WM-юзеру @${user.username || wm.telegramId}: ${user.autoReply ? 'отправлено' : 'черновик создан'}`);
+    await notifyAdmin(`👋 Welcome для @${user.username || wm.telegramId}: ${user.autoReply ? 'отправлено' : 'черновик создан'}`);
 }
 
 async function onUserUpdated(data: { user: WMUser; changedFields?: string[] }) {
