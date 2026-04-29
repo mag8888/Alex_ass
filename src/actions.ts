@@ -96,6 +96,12 @@ export async function upgradeStatusOnSend(dialogueId: number) {
                 const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
                 console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
                 emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
+                // Stats: mark recent OutreachAttempts (≤30 days) as LEAD-converted
+                const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+                await prisma.outreachAttempt.updateMany({
+                    where: { userId: user.id, becameLeadAt: null, sentAt: { gte: cutoff } },
+                    data: { becameLeadAt: new Date() },
+                }).catch(() => { });
                 if (!user.notifiedLead) {
                     // Try to enrich with WM profile (from cache, no extra HTTP if already fetched)
                     let wm = null;

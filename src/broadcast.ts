@@ -159,6 +159,10 @@ export async function sendBroadcast(opts: SendOptions): Promise<SendResult> {
                 where: { id: u.id },
                 data: { lastBroadcastAt: new Date(), lastBroadcastTemplateId: template.id },
             });
+            // Record outreach attempt for stats tracking
+            await prisma.outreachAttempt.create({
+                data: { templateId: template.id, userId: u.id, mode: opts.mode },
+            }).catch((e) => console.error('[broadcast] could not record attempt:', e.message));
             emitEvent({ type: 'dialogue:updated', dialogueId: dialogue.id });
         } catch (e: any) {
             failed.push({ userId: u.id, error: e.message });

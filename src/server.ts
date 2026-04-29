@@ -344,6 +344,47 @@ fastify.post('/broadcast/send', async (req, reply) => {
     }
 });
 
+// Per-template aggregated stats: sent / replied / lead / match + conversion rates
+fastify.get('/broadcast/stats', async (req, reply) => {
+    try {
+        const templates = await prisma.template.findMany({ orderBy: { name: 'asc' } });
+        const out = await Promise.all(templates.map(async (t) => {
+            const [sent, replied, lead, matched, customer, avgReply] = await Promise.all([
+                prisma.outreachAttempt.count({ where: { templateId: t.id } }),
+                prisma.outreachAttempt.count({ where: { templateId: t.id, firstReplyAt: { not: null } } }),
+                prisma.outreachAttempt.count({ where: { templateId: t.id, becameLeadAt: { not: null } } }),
+                prisma.outreachAttempt.count({ where: { templateId: t.id, becameMatchedAt: { not: null } } }),
+                prisma.outreachAttempt.count({ where: { templateId: t.id, becameCustomerAt: { not: null } } }),
+                // Average reply time in seconds
+                prisma.outreachAttempt.findMany({
+                    where: { templateId: t.id, firstReplyAt: { not: null } },
+                    select: { sentAt: true, firstReplyAt: true },
+                }).then(rows => {
+                    if (rows.length === 0) return null;
+                    const total = rows.reduce((sum, r) => sum + (r.firstReplyAt!.getTime() - r.sentAt.getTime()), 0);
+                    return Math.round(total / rows.length / 1000);
+                }),
+            ]);
+            return {
+                templateId: t.id,
+                name: t.name,
+                sent,
+                replied,
+                lead,
+                matched,
+                customer,
+                replyRate: sent > 0 ? Math.round((replied / sent) * 100) : 0,
+                leadRate: sent > 0 ? Math.round((lead / sent) * 100) : 0,
+                matchRate: sent > 0 ? Math.round((matched / sent) * 100) : 0,
+                avgReplySeconds: avgReply,
+            };
+        }));
+        return { stats: out };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // Backfill gender from firstName for all UNKNOWN users
 fastify.post('/broadcast/backfill-gender', async (req, reply) => {
     try {

@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { X, Megaphone, Send, Loader2, Eye, Edit3 } from 'lucide-react';
+import { X, Megaphone, Send, Loader2, Eye, Edit3, BarChart3 } from 'lucide-react';
 
 interface Template {
     id: number;
@@ -21,6 +21,20 @@ interface BroadcastModalProps {
     onClose: () => void;
 }
 
+interface ScenarioStats {
+    templateId: number;
+    name: string;
+    sent: number;
+    replied: number;
+    lead: number;
+    matched: number;
+    customer: number;
+    replyRate: number;
+    leadRate: number;
+    matchRate: number;
+    avgReplySeconds: number | null;
+}
+
 const SCENARIO_LABELS: Record<string, string> = {
     wm_welcome_after_registration: '👋 Welcome — после регистрации',
     wm_reactivation_general: '🔄 Реактивация — общий запрос',
@@ -35,6 +49,7 @@ const SCENARIO_LABELS: Record<string, string> = {
 };
 
 const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
+    const [tab, setTab] = useState<'send' | 'stats'>('send');
     const [templates, setTemplates] = useState<Template[]>([]);
     const [selectedId, setSelectedId] = useState<number | null>(null);
     const [editing, setEditing] = useState(false);
@@ -44,6 +59,8 @@ const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
     const [loading, setLoading] = useState(false);
     const [sending, setSending] = useState(false);
     const [filter, setFilter] = useState({ minProfile: 0, statuses: ['LEAD', 'QUALIFIED', 'MATCHED', 'CHAT', 'CUSTOMER'] });
+    const [stats, setStats] = useState<ScenarioStats[] | null>(null);
+    const [statsLoading, setStatsLoading] = useState(false);
 
     useEffect(() => {
         (async () => {
@@ -130,14 +147,96 @@ const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
     return (
         <div className="fixed inset-0 bg-black/60 z-50 flex items-end md:items-center justify-center p-0 md:p-4">
             <div className="bg-card w-full md:max-w-3xl md:rounded-xl shadow-xl border border-border overflow-hidden flex flex-col max-h-[95vh] safe-bottom">
-                <div className="bg-muted/50 p-4 flex justify-between items-center border-b border-border shrink-0">
-                    <h3 className="font-semibold text-lg flex items-center gap-2">
-                        <Megaphone className="w-5 h-5 text-orange-500" /> Рассылка по базе
-                    </h3>
-                    <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-2 -mr-2"><X className="h-5 w-5" /></button>
+                <div className="bg-muted/50 px-4 pt-4 pb-0 border-b border-border shrink-0">
+                    <div className="flex justify-between items-center mb-3">
+                        <h3 className="font-semibold text-lg flex items-center gap-2">
+                            <Megaphone className="w-5 h-5 text-orange-500" /> Рассылка по базе
+                        </h3>
+                        <button onClick={onClose} className="text-muted-foreground hover:text-foreground p-2 -mr-2"><X className="h-5 w-5" /></button>
+                    </div>
+                    <div className="flex gap-1">
+                        <button
+                            onClick={() => setTab('send')}
+                            className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px ${tab === 'send' ? 'border-orange-500 text-orange-500' : 'border-transparent text-muted-foreground'}`}
+                        >
+                            <Send className="w-3.5 h-3.5 inline mr-1" /> Отправить
+                        </button>
+                        <button
+                            onClick={async () => {
+                                setTab('stats');
+                                if (!stats) {
+                                    setStatsLoading(true);
+                                    try {
+                                        const res = await fetch('/broadcast/stats');
+                                        const data = await res.json();
+                                        setStats(data.stats || []);
+                                    } finally {
+                                        setStatsLoading(false);
+                                    }
+                                }
+                            }}
+                            className={`px-3 py-2 text-xs font-medium border-b-2 -mb-px ${tab === 'stats' ? 'border-orange-500 text-orange-500' : 'border-transparent text-muted-foreground'}`}
+                        >
+                            <BarChart3 className="w-3.5 h-3.5 inline mr-1" /> Статистика
+                        </button>
+                    </div>
                 </div>
 
                 <div className="flex-1 overflow-y-auto p-4 space-y-4">
+                    {tab === 'stats' && (
+                        <div className="space-y-2">
+                            {statsLoading && (
+                                <div className="text-center py-8 text-muted-foreground"><Loader2 className="w-6 h-6 animate-spin mx-auto" /></div>
+                            )}
+                            {!statsLoading && stats && stats.length === 0 && (
+                                <div className="text-center py-8 text-muted-foreground text-sm">Пока нет данных рассылок.</div>
+                            )}
+                            {!statsLoading && stats && stats.length > 0 && (
+                                <>
+                                    <div className="text-[10px] uppercase text-muted-foreground tracking-wider mb-2">
+                                        Воронка по сценариям. Replied = ответил в течение 14 дней. Lead = upgrade ≤ 30 дней после рассылки.
+                                    </div>
+                                    {stats.sort((a, b) => b.sent - a.sent).map(s => (
+                                        <div key={s.templateId} className="border border-border rounded-md p-3 hover:border-orange-500/40">
+                                            <div className="text-sm font-medium mb-1">{SCENARIO_LABELS[s.name] || s.name}</div>
+                                            <div className="grid grid-cols-4 gap-2 text-[11px]">
+                                                <div>
+                                                    <div className="text-muted-foreground">Отправлено</div>
+                                                    <div className="text-base font-semibold">{s.sent}</div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-muted-foreground">Ответили</div>
+                                                    <div className="text-base font-semibold text-emerald-500">{s.replied} <span className="text-[10px] opacity-70">({s.replyRate}%)</span></div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-muted-foreground">Стали LEAD</div>
+                                                    <div className="text-base font-semibold text-orange-500">{s.lead} <span className="text-[10px] opacity-70">({s.leadRate}%)</span></div>
+                                                </div>
+                                                <div>
+                                                    <div className="text-muted-foreground">MATCHED</div>
+                                                    <div className="text-base font-semibold text-purple-500">{s.matched} <span className="text-[10px] opacity-70">({s.matchRate}%)</span></div>
+                                                </div>
+                                            </div>
+                                            {s.avgReplySeconds !== null && s.replied > 0 && (
+                                                <div className="text-[10px] text-muted-foreground mt-2">
+                                                    Среднее время до ответа: {s.avgReplySeconds < 3600 ? `${Math.round(s.avgReplySeconds / 60)} мин` : `${(s.avgReplySeconds / 3600).toFixed(1)} ч`}
+                                                </div>
+                                            )}
+                                            {/* Tiny conversion bar */}
+                                            <div className="mt-2 flex h-1.5 rounded overflow-hidden bg-muted">
+                                                {s.sent > 0 && <>
+                                                    <div className="bg-emerald-500" style={{ width: `${s.replyRate}%` }} />
+                                                    <div className="bg-orange-500" style={{ width: `${Math.max(0, s.leadRate - s.replyRate)}%` }} />
+                                                </>}
+                                            </div>
+                                        </div>
+                                    ))}
+                                </>
+                            )}
+                        </div>
+                    )}
+
+                    {tab === 'send' && (<>
                     {/* Template picker */}
                     <div>
                         <label className="text-xs font-medium text-muted-foreground uppercase mb-1 block">Сценарий</label>
@@ -242,10 +341,11 @@ const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
                             </div>
                         </div>
                     )}
+                    </>)}
                 </div>
 
-                {/* Footer actions */}
-                <div className="p-3 border-t border-border bg-muted/20 flex flex-col sm:flex-row gap-2 shrink-0">
+                {/* Footer actions (only for Send tab) */}
+                {tab === 'send' && <div className="p-3 border-t border-border bg-muted/20 flex flex-col sm:flex-row gap-2 shrink-0">
                     <button
                         onClick={() => send('draft')}
                         disabled={!preview || selected.size === 0 || sending}
@@ -262,7 +362,7 @@ const BroadcastModal: React.FC<BroadcastModalProps> = ({ onClose }) => {
                         {sending ? <Loader2 className="w-4 h-4 animate-spin" /> : <Send className="w-4 h-4" />}
                         Отправить сразу ({selected.size})
                     </button>
-                </div>
+                </div>}
             </div>
         </div>
     );

@@ -192,6 +192,21 @@ export async function startListener(_page?: any) {
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
+        // ── Stats: if this user has a recent OutreachAttempt with no firstReplyAt,
+        //    mark it now. Window = last 14 days to avoid attributing a much later
+        //    organic reply to an old broadcast.
+        try {
+            const fourteenDaysAgo = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
+            await prisma.outreachAttempt.updateMany({
+                where: {
+                    userId: user.id,
+                    firstReplyAt: null,
+                    sentAt: { gte: fourteenDaysAgo },
+                },
+                data: { firstReplyAt: new Date() },
+            });
+        } catch (_) { }
+
         // ── Notify lead channel about brand-new conversations once ─────────
         if (!user.notifiedNew) {
             const card = buildUserCard(user, { title: '👋 Новый человек написал' });
