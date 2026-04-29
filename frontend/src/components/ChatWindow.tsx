@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { Dialogue } from '../types';
 import { useChat } from '../hooks/useChat';
 import ClientCard from './ClientCard';
-import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2, Bot, Sparkles, ArrowLeft, MoreVertical, Eraser, RotateCcw } from 'lucide-react';
+import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2, Bot, Sparkles, ArrowLeft, MoreVertical, Eraser, RotateCcw, Check, CheckCheck } from 'lucide-react';
 
 // ─── Quick Templates ────────────────────────────────────────────────────
 const QUICK_TEMPLATES = [
@@ -247,6 +247,8 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                         );
                     }
                     const isVoiceTranscript = msg.text.startsWith('🎙️');
+                    const isOutbound = msg.sender !== 'USER';
+                    const isRead = !!msg.readAt;
                     return (
                         <div key={msg.id} className={`flex ${msg.sender === 'USER' ? 'justify-start' : 'justify-end'}`}>
                             <div className={`max-w-[80%] md:max-w-[70%] rounded-lg p-3 text-sm shadow-sm ${msg.sender === 'USER'
@@ -259,8 +261,13 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                                     </div>
                                 )}
                                 <div className="whitespace-pre-wrap break-words">{isVoiceTranscript ? msg.text.replace(/^🎙️\s*/, '') : msg.text}</div>
-                                <div className="text-[10px] opacity-70 text-right mt-1">
-                                    {new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                                <div className="text-[10px] opacity-70 text-right mt-1 flex items-center justify-end gap-1">
+                                    <span>{new Date(msg.createdAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}</span>
+                                    {isOutbound && msg.status === 'SENT' && (
+                                        isRead
+                                            ? <CheckCheck className="w-3.5 h-3.5 opacity-100" aria-label="Прочитано" />
+                                            : <Check className="w-3.5 h-3.5 opacity-80" aria-label="Отправлено" />
+                                    )}
                                 </div>
                             </div>
                         </div>

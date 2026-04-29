@@ -83,6 +83,7 @@ export interface Message {
     status: MessageStatus;
     createdAt: string; // ISO Date string
     updatedAt?: string;
+    readAt?: string | null;
 }
 
 export interface Dialogue {

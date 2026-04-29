@@ -1,4 +1,5 @@
 import { NewMessage } from "telegram/events";
+import { Api } from "telegram";
 import { getClient } from "./client";
 import {
     ensureUserAndDialogue,
@@ -65,6 +66,46 @@ export async function startListener(_page?: any) {
     }
 
     console.log("[Listener] Starting GramJS event listener...");
+
+    // ── Read receipts: when the recipient opens our chat, GramJS gets
+    //    Api.UpdateReadHistoryOutbox with peer=PeerUser and maxId. We don't
+    //    track Telegram message IDs locally, so we just flip every unread
+    //    outbound message in that dialogue to readAt=now. Functionally:
+    //    ✓  → ✓✓ once the recipient reads.
+    client.addEventHandler(async (update: any) => {
+        try {
+            if (!update || update.className !== 'UpdateReadHistoryOutbox') return;
+            const peer = update.peer;
+            if (!peer || peer.className !== 'PeerUser') return;
+            const tgUserId = String(peer.userId);
+            const u = await prisma.user.findFirst({
+                where: { OR: [{ telegramId: tgUserId }, { username: tgUserId }] },
+                select: { id: true },
+            });
+            if (!u) return;
+            const dlg = await prisma.dialogue.findFirst({
+                where: { userId: u.id },
+                orderBy: { updatedAt: 'desc' },
+                select: { id: true },
+            });
+            if (!dlg) return;
+            const result = await prisma.message.updateMany({
+                where: {
+                    dialogueId: dlg.id,
+                    sender: { in: ['OPERATOR', 'SIMULATOR'] },
+                    status: 'SENT',
+                    readAt: null,
+                },
+                data: { readAt: new Date() },
+            });
+            if (result.count > 0) {
+                console.log(`[Listener] Marked ${result.count} outbound messages as read in dialogue ${dlg.id}`);
+                emitEvent({ type: 'dialogue:updated', dialogueId: dlg.id });
+            }
+        } catch (e: any) {
+            console.error('[Listener] read-receipt handler error:', e.message);
+        }
+    });
 
     client.addEventHandler(async (event: any) => {
         const message = event.message;

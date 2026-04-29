@@ -136,6 +136,7 @@ model Message {
   status     MessageStatus @default(SENT)
   feedback   String?       // Operator feedback/correction for this message
   createdAt  DateTime @default(now())
+  readAt     DateTime?     // Set when the recipient's Telegram reports having read up to this point (UpdateReadHistoryOutbox)
 }
 
 model Template {
