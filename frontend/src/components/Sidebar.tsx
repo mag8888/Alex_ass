@@ -40,7 +40,8 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
         syncChats,
         showRejected,
         setShowRejected,
-        loading
+        loading,
+        fullReset,
     } = chatState;
 
 
@@ -274,7 +275,16 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
             <div className="p-3 border-t border-border bg-muted/30 text-xs safe-bottom">
                 <div className="flex justify-between items-center mb-2">
                     <StatusIndicator />
-                    <span className="text-[10px] text-muted-foreground opacity-50">v1.3</span>
+                    <div className="flex items-center gap-2">
+                        <button
+                            onClick={fullReset}
+                            className="text-[10px] text-red-500/70 hover:text-red-500 hover:underline"
+                            title="Полный сброс БД (двойное подтверждение)"
+                        >
+                            Wipe
+                        </button>
+                        <span className="text-[10px] text-muted-foreground opacity-50">v1.4</span>
+                    </div>
                 </div>
             </div>
         </div>

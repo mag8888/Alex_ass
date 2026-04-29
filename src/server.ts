@@ -141,6 +141,74 @@ fastify.delete('/messages/:id', async (req, reply) => {
     }
 });
 
+// ── Cleanup helpers ─────────────────────────────────────────────────────────
+
+// Drop all DRAFTs in a dialogue (keep history of sent/received messages)
+fastify.post('/dialogues/:id/cleanup-drafts', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+        const result = await prisma.message.deleteMany({
+            where: { dialogueId: Number(id), status: 'DRAFT' },
+        });
+        emitEvent({ type: 'dialogue:updated', dialogueId: Number(id) });
+        return { success: true, deleted: result.count };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Reset a dialogue: wipe ALL messages, reset stage to DISCOVERY, status to NEW
+fastify.post('/dialogues/:id/reset', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    try {
+        const dialogue = await prisma.dialogue.findUnique({
+            where: { id: Number(id) },
+            select: { userId: true },
+        });
+        if (!dialogue) return reply.code(404).send({ error: 'Not found' });
+
+        await prisma.$transaction([
+            prisma.message.deleteMany({ where: { dialogueId: Number(id) } }),
+            prisma.dialogue.update({
+                where: { id: Number(id) },
+                data: { stage: 'DISCOVERY', status: 'ACTIVE', updatedAt: new Date() },
+            }),
+            prisma.user.update({
+                where: { id: dialogue.userId },
+                data: { status: 'NEW', notifiedNew: false, notifiedLead: false },
+            }),
+        ]);
+        emitEvent({ type: 'dialogue:updated', dialogueId: Number(id) });
+        return { success: true };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// One-time mass cleanup: dedupe DRAFTs across the whole DB
+// (older DRAFTs in same dialogue are removed, only the newest stays)
+fastify.post('/admin/dedupe-drafts', async (req, reply) => {
+    try {
+        const drafts = await prisma.message.findMany({
+            where: { status: 'DRAFT' },
+            select: { id: true, dialogueId: true, createdAt: true },
+            orderBy: [{ dialogueId: 'asc' }, { createdAt: 'desc' }],
+        });
+        const seen = new Set<number>();
+        const toDelete: number[] = [];
+        for (const m of drafts) {
+            if (seen.has(m.dialogueId)) toDelete.push(m.id);
+            else seen.add(m.dialogueId);
+        }
+        if (toDelete.length > 0) {
+            await prisma.message.deleteMany({ where: { id: { in: toDelete } } });
+        }
+        return { success: true, deleted: toDelete.length };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Match Engine: find candidates for connection ────────────────────────────
 fastify.get('/users/:id/matches', async (req, reply) => {
     const { id } = req.params as { id: string };
@@ -1675,6 +1743,25 @@ const start = async () => {
             // Seed broadcast scenarios + backfill gender from names
             try { await seedScenarios(); } catch (e) { console.error('[STARTUP] seedScenarios failed:', e); }
             try { await backfillGender(); } catch (e) { console.error('[STARTUP] backfillGender failed:', e); }
+
+            // One-shot dedupe: leave only newest DRAFT per dialogue
+            try {
+                const drafts = await prisma.message.findMany({
+                    where: { status: 'DRAFT' },
+                    select: { id: true, dialogueId: true },
+                    orderBy: [{ dialogueId: 'asc' }, { createdAt: 'desc' }],
+                });
+                const seen = new Set<number>();
+                const stale: number[] = [];
+                for (const m of drafts) {
+                    if (seen.has(m.dialogueId)) stale.push(m.id);
+                    else seen.add(m.dialogueId);
+                }
+                if (stale.length > 0) {
+                    await prisma.message.deleteMany({ where: { id: { in: stale } } });
+                    console.log(`[STARTUP] Removed ${stale.length} duplicate drafts`);
+                }
+            } catch (e) { console.error('[STARTUP] dedupe-drafts failed:', e); }
         } catch (dbErr) {
             console.error('[STARTUP] ⚠️ Database connection failed (Non-critical for some features):', dbErr);
         }

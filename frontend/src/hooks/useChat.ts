@@ -262,6 +262,34 @@ export const useChat = () => {
         }
     };
 
+    const cleanupDrafts = async (dialogueId: number) => {
+        try {
+            await fetch(`/dialogues/${dialogueId}/cleanup-drafts`, { method: 'POST' });
+            if (currentDialogue?.id === dialogueId) await selectChat(dialogueId);
+        } catch (e) { console.error(e); }
+    };
+
+    const resetDialogue = async (dialogueId: number) => {
+        if (!confirm('Точно сбросить диалог? Все сообщения будут удалены, статус → NEW. Это нельзя отменить.')) return;
+        try {
+            await fetch(`/dialogues/${dialogueId}/reset`, { method: 'POST' });
+            if (currentDialogue?.id === dialogueId) await selectChat(dialogueId);
+            await loadDialogues(true);
+        } catch (e) { console.error(e); alert('Failed'); }
+    };
+
+    const fullReset = async () => {
+        const a = prompt('ВНИМАНИЕ: это полностью сотрёт всех юзеров, диалоги, сообщения, scout. Введите "WIPE" чтобы подтвердить:');
+        if (a !== 'WIPE') return;
+        try {
+            const res = await fetch('/admin/reset-db', { method: 'POST' });
+            const data = await res.json();
+            alert(data.success ? 'База очищена' : `Ошибка: ${data.error || 'неизвестная'}`);
+            setCurrentDialogue(null);
+            await loadDialogues();
+        } catch (e: any) { alert(e.message); }
+    };
+
     const startOnboarding = async (dialogueId: number) => {
         try {
             setLoading(true);
@@ -303,5 +331,8 @@ export const useChat = () => {
         regenerateResponse,
         toggleAutoMode,
         startOnboarding,
+        cleanupDrafts,
+        resetDialogue,
+        fullReset,
     };
 };

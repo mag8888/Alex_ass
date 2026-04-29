@@ -236,19 +236,25 @@ export async function sendMessageToUser(userId: number, text: string) {
 }
 
 export async function createDraftMessage(dialogueId: number, text: string) {
-    const [msg] = await prisma.$transaction([
+    // ─ Replace, don't stack ─────────────────────────────────────────────────
+    // If there are unsent drafts already, drop them — only ONE active draft
+    // per dialogue keeps the operator UI clean.
+    const [, msg] = await prisma.$transaction([
+        prisma.message.deleteMany({
+            where: { dialogueId, status: MessageStatus.DRAFT },
+        }),
         prisma.message.create({
             data: {
                 dialogueId,
-                sender: 'SIMULATOR', // Keep legacy enum for now
+                sender: 'SIMULATOR', // legacy enum
                 text,
-                status: MessageStatus.DRAFT
-            }
+                status: MessageStatus.DRAFT,
+            },
         }),
         prisma.dialogue.update({
             where: { id: dialogueId },
-            data: { updatedAt: new Date() }
-        })
+            data: { updatedAt: new Date() },
+        }),
     ]);
     const dlg = await prisma.dialogue.findUnique({ where: { id: dialogueId }, select: { userId: true } });
     if (dlg) emitEvent({ type: 'message:draft', dialogueId, userId: dlg.userId, text });

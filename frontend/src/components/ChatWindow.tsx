@@ -2,7 +2,7 @@ import React, { useState } from 'react';
 import type { Dialogue } from '../types';
 import { useChat } from '../hooks/useChat';
 import ClientCard from './ClientCard';
-import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2, Bot, Sparkles, ArrowLeft, MoreVertical } from 'lucide-react';
+import { Send, Archive, ShieldAlert, UserCheck, ArrowRightLeft, CreditCard, RefreshCw, Trash2, Edit2, Bot, Sparkles, ArrowLeft, MoreVertical, Eraser, RotateCcw } from 'lucide-react';
 
 // ─── Quick Templates ────────────────────────────────────────────────────
 const QUICK_TEMPLATES = [
@@ -207,6 +207,19 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                                         className="w-full px-3 py-2 text-left text-xs hover:bg-muted flex items-center gap-2"
                                     >
                                         <Archive className="w-3.5 h-3.5" /> Archive
+                                    </button>
+                                    <div className="border-t border-border my-1" />
+                                    <button
+                                        onClick={() => { actions.cleanupDrafts(dialogue.id); setShowActionsMenu(false); }}
+                                        className="w-full px-3 py-2 text-left text-xs hover:bg-muted flex items-center gap-2"
+                                    >
+                                        <Eraser className="w-3.5 h-3.5" /> Очистить черновики
+                                    </button>
+                                    <button
+                                        onClick={() => { actions.resetDialogue(dialogue.id); setShowActionsMenu(false); }}
+                                        className="w-full px-3 py-2 text-left text-xs hover:bg-red-500/10 text-red-500 flex items-center gap-2"
+                                    >
+                                        <RotateCcw className="w-3.5 h-3.5" /> Сбросить диалог
                                     </button>
                                 </div>
                             </>
