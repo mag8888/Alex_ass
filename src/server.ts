@@ -23,6 +23,30 @@ const fastify = Fastify({ logger: true });
 // Enable CORS
 fastify.register(fastifyCors, { origin: true });
 
+// Accept form-encoded bodies (some integrations / health-pingers send them)
+fastify.addContentTypeParser(
+    'application/x-www-form-urlencoded',
+    { parseAs: 'string' },
+    (req, body: any, done) => {
+        try {
+            const params = new URLSearchParams(body);
+            const out: Record<string, string> = {};
+            for (const [k, v] of params) out[k] = v;
+            done(null, out);
+        } catch (e: any) {
+            done(e);
+        }
+    },
+);
+
+// 415 with the path so we can see who's poking at unsupported endpoints
+fastify.setErrorHandler((err: any, req, reply) => {
+    if (err.statusCode === 415) {
+        req.log.warn({ url: req.url, contentType: req.headers['content-type'] }, '[415] unsupported media type');
+    }
+    reply.send(err);
+});
+
 // ── Wave Match webhook receiver ─────────────────────────────────────────────
 // HMAC must be verified over the RAW body string, so we capture it in a hook
 // before Fastify's default JSON parser runs.
@@ -1826,6 +1850,26 @@ const start = async () => {
                     console.log(`[STARTUP] Removed ${stale.length} duplicate drafts`);
                 }
             } catch (e) { console.error('[STARTUP] dedupe-drafts failed:', e); }
+
+            // Un-reject the admin user so the bot doesn't ignore them.
+            // Listener also auto-skips messages from ADMIN_USERNAME, so this is
+            // just hygiene if someone manually rejected the admin earlier.
+            try {
+                const adminUsername = process.env.ADMIN_USERNAME || 'roman_arctur';
+                const result = await prisma.user.updateMany({
+                    where: {
+                        OR: [
+                            { username: adminUsername },
+                            { telegramId: adminUsername },
+                        ],
+                        status: 'REJECTED',
+                    },
+                    data: { status: 'NEW' },
+                });
+                if (result.count > 0) {
+                    console.log(`[STARTUP] Un-rejected admin user @${adminUsername}`);
+                }
+            } catch (e) { console.error('[STARTUP] un-reject admin failed:', e); }
         } catch (dbErr) {
             console.error('[STARTUP] ⚠️ Database connection failed (Non-critical for some features):', dbErr);
         }
