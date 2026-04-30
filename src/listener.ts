@@ -15,6 +15,7 @@ import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
+import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
@@ -307,6 +308,20 @@ export async function startListener(_page?: any) {
                 }).catch(() => { });
             }
         } catch (_) { /* brain table may not exist yet on first deploy */ }
+
+        // ── Match engine: top-3 потенциальных партнёров для этого юзера ────
+        try {
+            const matches = await findMatches(user.id, { limit: 3, minScore: 4 });
+            if (matches.length > 0) {
+                const block = formatMatchesForPrompt(matches);
+                if (block) {
+                    allRules.push(block);
+                    console.log(`[match-engine] Found ${matches.length} match(es) for uid=${user.id} (top score=${matches[0].score})`);
+                }
+            }
+        } catch (e: any) {
+            console.warn('[match-engine] error:', e.message);
+        }
 
         const recentMessages = await prisma.message.findMany({
             where: { dialogueId: dialogue.id },
