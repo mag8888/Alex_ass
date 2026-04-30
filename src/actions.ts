@@ -210,6 +210,17 @@ export async function sendDraftMessage(page: any, messageId: number, customText?
 
 // Refactored to use userId and GramJS directly
 export async function sendMessageToUser(userId: number, text: string) {
+    // Multi-part marker: split on "---SPLIT---" lines into separate messages
+    // with realistic typing delays. Used by GPT-generated replies that need
+    // to read like WhatsApp (Roman: cold first-touch must be 2-4 short bursts).
+    if (text && text.includes('---SPLIT---')) {
+        const parts = text.split(/---SPLIT---/g).map(p => p.trim()).filter(Boolean);
+        if (parts.length > 1) {
+            console.log(`[ACTION] sendMessageToUser splitting into ${parts.length} parts for userId=${userId}`);
+            return sendMultipart(userId, parts);
+        }
+        text = parts[0] || text;
+    }
     console.log(`[ACTION] sendMessageToUser called for userId: ${userId}`);
     const client = getClient();
     if (!client || !client.connected) {
@@ -261,6 +272,27 @@ export async function sendMessageToUser(userId: number, text: string) {
         console.error('[ACTION] Failed to send message:', e);
         throw e;
     }
+}
+
+/**
+ * Send multiple short messages with realistic typing delays — for cold outreach
+ * and any case where one message would be a wall of text. Each part should be
+ * ONE thought (greeting / context / offer / question). Delay 1.5-2.5s between
+ * parts so it reads like a person typing in WhatsApp.
+ *
+ * Roman: cold first-touch must be 2-4 short messages, not one paragraph.
+ */
+export async function sendMultipart(userId: number, parts: string[], opts?: { delayMs?: [number, number] }) {
+    const [minMs, maxMs] = opts?.delayMs ?? [1500, 2500];
+    const filtered = parts.map(p => p.trim()).filter(Boolean);
+    for (let i = 0; i < filtered.length; i++) {
+        if (i > 0) {
+            const wait = minMs + Math.floor(Math.random() * (maxMs - minMs));
+            await new Promise(r => setTimeout(r, wait));
+        }
+        await sendMessageToUser(userId, filtered[i]);
+    }
+    return { sent: filtered.length };
 }
 
 export async function createDraftMessage(dialogueId: number, text: string) {

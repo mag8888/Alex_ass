@@ -512,6 +512,22 @@ fastify.get('/users/:id/match-candidates', async (req, reply) => {
     }
 });
 
+// ── Multi-part send (cold outreach / WhatsApp-style sequence) ───────────────
+fastify.post('/users/:id/send-multipart', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { parts, delayMs } = req.body as { parts: string[]; delayMs?: [number, number] };
+    if (!Array.isArray(parts) || parts.length === 0) {
+        return reply.code(400).send({ error: 'parts must be non-empty array' });
+    }
+    try {
+        const { sendMultipart } = await import('./actions');
+        const result = await sendMultipart(Number(id), parts, { delayMs });
+        return { success: true, ...result };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Outreach queue admin endpoints ──────────────────────────────────────────
 fastify.get('/outreach-queue/status', async () => getOutreachQueueStatus());
 fastify.post('/outreach-queue/pause', async () => { pauseOutreachQueue(); return { ok: true, ...getOutreachQueueStatus() }; });
