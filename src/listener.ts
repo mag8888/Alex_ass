@@ -14,6 +14,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
+import { pickReaction } from './reactionPicker';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
@@ -178,18 +179,19 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        // ── Mark as read + set 👌 reaction ───────────────────────────────────
-        // Roman: "если человек что-то написал и ты просмотрел — ставь эмодзи"
-        // (👌 = OK / получил; нейтрально для любого инбаунда).
+        // ── Mark as read + set context-aware reaction ────────────────────────
+        // Roman: "ставь эмодзи в тему". pickReaction подбирает по тону/контенту:
+        // 🙏 thanks, 🤝 deal, 🎉 done, 🔥 fire, ⚡ short-yes, ❤ heart, 😁 lol,
+        // 😢 sad, 🤯 wow, 🤔 unclear, 👀 curious, ✍ profile-data, 👌 default OK.
         try { await message.markAsRead(); } catch (_) { }
         try {
+            const emoji = pickReaction(text);
             await client.invoke(new Api.messages.SendReaction({
                 peer: message.peerId,
                 msgId: message.id,
-                reaction: [new Api.ReactionEmoji({ emoticon: '👌' })],
+                reaction: [new Api.ReactionEmoji({ emoticon: emoji })],
             }));
         } catch (e: any) {
-            // REACTION_INVALID / not allowed / older TG client — silent skip
             console.log(`[react] skip msg=${message.id}: ${e.message?.slice(0, 80)}`);
         }
 
