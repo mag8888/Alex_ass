@@ -592,6 +592,24 @@ export interface components {
             marketingOptInUpdatedAt?: string;
             crmTags?: string[];
             locale?: string;
+            profile?: components["schemas"]["WritableProfileFields"];
+        };
+        /**
+         * @description Profile fields editable by partner integrations (Wave Chat).
+         *     Sent inside `WritableUserFields.profile` on `PATCH /api/wm/users/:id`.
+         *     Conflict resolution: last-write-wins, gated by If-Match (no special
+         *     `mode` flag in v1). public-vs-internal split: `profile.tags` are
+         *     public/searchable; AI-internal labels go to top-level `crmTags`.
+         */
+        WritableProfileFields: {
+            role?: string | null;
+            industry?: string | null;
+            location?: string | null;
+            company?: string | null;
+            gender?: components["schemas"]["Gender"];
+            tags?: string[];
+            skills?: string[];
+            hobbies?: string[];
         };
         CrmNoteCreate: {
             kind?: components["schemas"]["CrmNoteKind"];

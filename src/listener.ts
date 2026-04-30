@@ -14,7 +14,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
-import { getUserByTelegramId, addAiNote, addCrmTag, isWMEnabled, WMUser } from './wmClient';
+import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
 // Refresh every 30s so admin edits propagate without restart, but DB hits stay low.
@@ -316,11 +316,39 @@ export async function startListener(_page?: any) {
                 await prisma.user.update({ where: { id: user.id }, data: safe });
                 console.log(`[Listener] Extracted profile fields: ${Object.keys(safe).join(', ')}`);
 
-                // We don't sync profile.* to Wave Match — WM doesn't model these
-                // fields. Instead, on first activity-extraction we mark the WM
-                // user with a `ai-profiling` tag so admins can spot AI-touched users.
-                if (wmUser && safe.activity) {
-                    addCrmTag(wmUser.id, 'ai-profiling').catch(e => console.error('[wm] addCrmTag error:', e.message));
+                // ── Push to Wave Match Profile (since contract v1.3.0) ─────
+                if (wmUser) {
+                    const profilePatch: WritableProfileFields = {};
+                    const wmProfile = wmUser.profile || {};
+                    // Map our local taxonomy → WM Profile fields, only filling
+                    // what WM doesn't already have (no overwrites).
+                    if (safe.city && !wmProfile.location) profilePatch.location = safe.city;
+                    if (safe.activity) {
+                        // Role first, then industry as fallback. Don't overwrite.
+                        if (!wmProfile.role) profilePatch.role = safe.activity;
+                        else if (!wmProfile.industry) profilePatch.industry = safe.activity;
+                    }
+                    if (safe.hobbies && (!Array.isArray(wmProfile.hobbies) || wmProfile.hobbies.length === 0)) {
+                        const hobbiesArr = String(safe.hobbies)
+                            .split(/[,;\n]+/)
+                            .map((s) => s.trim())
+                            .filter(Boolean)
+                            .slice(0, 30);
+                        if (hobbiesArr.length > 0) profilePatch.hobbies = hobbiesArr;
+                    }
+
+                    if (Object.keys(profilePatch).length > 0) {
+                        const etag = getCachedEtag(wmUser.id);
+                        const result = await patchProfile(wmUser.id, profilePatch, { ifMatch: etag });
+                        if (result) {
+                            console.log(`[wm] Pushed ${Object.keys(profilePatch).join(', ')} to Wave Match profile (completion=${(result.user.profile as any)?.completion ?? 'n/a'}%)`);
+                        } else {
+                            console.warn(`[wm] patchProfile returned null — ETag mismatch or 4xx. Local data preserved.`);
+                        }
+
+                        // Also tag in CRM (internal AI-marker, separate from public profile.tags)
+                        addCrmTag(wmUser.id, 'ai-profiling').catch(() => { });
+                    }
                 }
             }
         }

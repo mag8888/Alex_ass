@@ -12,6 +12,7 @@ export type WMSubscription = components['schemas']['Subscription'];
 export type WMUserClubMembership = components['schemas']['UserClubMembership'];
 export type WMUserStats = components['schemas']['UserStats'];
 export type WritableUserFields = components['schemas']['WritableUserFields'];
+export type WritableProfileFields = components['schemas']['WritableProfileFields'];
 export type WMSubscriptionTier = components['schemas']['SubscriptionTier'];
 export type CrmNoteCreate = components['schemas']['CrmNoteCreate'];
 export type CrmNote = components['schemas']['CrmNote'];
@@ -184,6 +185,19 @@ export async function patchUser(
         console.error('[wm] patchUser error:', e.message);
         return null;
     }
+}
+
+/**
+ * Push WM Profile fields (role / industry / location / company / gender /
+ * tags / skills / hobbies). Wraps PATCH /api/wm/users/:id with body.profile.
+ * Available since contract v1.3.0 (deployed by Wave Match team 2026-04-30).
+ */
+export async function patchProfile(
+    id: string,
+    profile: WritableProfileFields,
+    options: { ifMatch?: string | null } = {},
+): Promise<PatchResult | null> {
+    return patchUser(id, { profile } as WritableUserFields, options);
 }
 
 /**

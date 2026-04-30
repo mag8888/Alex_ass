@@ -55,6 +55,11 @@
 | **`subscription.changed` emitter on payments** | WM | Stub event handler exists on WC side, awaits real payload |
 | **Phase 3 from WM TZ §5** | WM | Encryption `WebhookSubscription.secretEnc` at rest, `DELETE /api/wm/users/:id` (GDPR Art.17), webhooks status dashboard in `/admin` |
 
+### Resolved ✅
+| Item | Resolution |
+|------|------------|
+| **Profile-write API** (was: WM doesn't accept `profile.*` in PATCH) | Wave Match shipped extension to `PATCH /api/wm/users/:id` accepting `body.profile.*` (PR #5 in Wave_Connect, deployed `7e6d401` 2026-04-30). All 5 acceptance tests green. WC consumes via `wmClient.patchProfile()` since contract v1.3.0. Conflict policy: last-write-wins gated by If-Match. `profile.tags` public, `crmTags` internal/AI. |
+
 ---
 
 ## Blocked / Needs from other side 🔴
@@ -73,6 +78,7 @@ Open coordination questions (not blocking, but should be answered):
 
 > Newest first. Format: `YYYY-MM-DD HH:MM UTC — [side] short summary (PR #N)`
 
+- `2026-04-30 ~04:00 UTC` — **WM**: shipped `body.profile.*` extension on `PATCH /api/wm/users/:id` (deploy `7e6d401`). All 5 acceptance tests green. **WC**: canon → v1.3.0, regenerated types, added `wmClient.patchProfile()`, listener now mirrors local extracted fields (city→location, activity→role/industry, hobbies→array) into Wave Match Profile after every GPT extract. Decisions on §7: last-write-wins + If-Match (Q1), no confidence flag (Q2), tags=public / crmTags=internal (Q3).
 - `2026-04-29 ~13:00 UTC` — **WC**: ALIGNMENT v1.2.0 — canon, types, wmClient, webhook handler, listener, server, runbook all aligned to deployed Wave Match per `WAVE_CHAT_ALIGNMENT_TZ.md`. Breaking changes: User schema, PATCH body (`WritableUserFields`), CRM notes `kind+body`, webhook envelope `deliveryId+createdAt+wrapped data`, `tg:<id>` lookup instead of `/by-telegram`.
 - `2026-04-29 ~12:00 UTC` — **WC**: typed client generated from spec, `npm run gen:wm-types` script (PR #15)
 - `2026-04-29 ~11:55 UTC` — **WC**: `docs/contract/` published as canonical OpenAPI source-of-truth (PR #14)
