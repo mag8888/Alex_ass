@@ -18,6 +18,13 @@ import { previewBroadcast, sendBroadcast, backfillGender, findAudience, Audience
 import { isWMEnabled, ensureWebhookSubscription } from './wmClient';
 import { verifySignature, handleWMEvent } from './webhookHandler';
 import { runDailyAnalyzer, startBrainAnalyzerCron } from './brainAnalyzer';
+import {
+    startOutreachQueue,
+    tickOutreachQueue,
+    pauseOutreachQueue,
+    resumeOutreachQueue,
+    getOutreachQueueStatus,
+} from './outreachQueue';
 
 const fastify = Fastify({ logger: true });
 
@@ -481,6 +488,19 @@ fastify.delete('/brain/scenarios/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     await prisma.learnedScenario.delete({ where: { id: Number(id) } }).catch(() => { });
     return { success: true };
+});
+
+// ── Outreach queue admin endpoints ──────────────────────────────────────────
+fastify.get('/outreach-queue/status', async () => getOutreachQueueStatus());
+fastify.post('/outreach-queue/pause', async () => { pauseOutreachQueue(); return { ok: true, ...getOutreachQueueStatus() }; });
+fastify.post('/outreach-queue/resume', async () => { resumeOutreachQueue(); return { ok: true, ...getOutreachQueueStatus() }; });
+fastify.post('/outreach-queue/tick-now', async (req, reply) => {
+    try {
+        const r = await tickOutreachQueue(true);
+        return { ...r, status: getOutreachQueueStatus() };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
 });
 
 // Manually trigger the daily analyzer (also runs automatically at 04:00 UTC)
@@ -2081,6 +2101,7 @@ const start = async () => {
             try { await backfillGender(); } catch (e) { console.error('[STARTUP] backfillGender failed:', e); }
             // Start the Brain analyzer cron (runs daily at 04:00 UTC)
             try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
+            try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {
