@@ -15,15 +15,31 @@ const QUICK_TEMPLATES = [
 
 interface DraftMessageProps {
     message: any;
+    dialogueId: number;
     onSend: (id: number, text: string) => void;
     onRegenerate: (id: number) => void;
     onDelete: (id: number) => void;
+    onRecordOverride?: (dialogueId: number, operatorMessage: string, replacedDraft: string) => Promise<any>;
 }
 
-const DraftMessage: React.FC<DraftMessageProps> = ({ message, onSend, onRegenerate, onDelete }) => {
+const DraftMessage: React.FC<DraftMessageProps> = ({ message, dialogueId, onSend, onRegenerate, onDelete, onRecordOverride }) => {
     const [text, setText] = useState(message.text);
+    const [savedAsPattern, setSavedAsPattern] = useState(false);
 
-    const handleSend = () => onSend(message.id, text);
+    const handleSend = async () => {
+        // If operator edited the text, capture it as a learned pattern before sending
+        if (onRecordOverride && text.trim() !== (message.text || '').trim()) {
+            await onRecordOverride(dialogueId, text, message.text || '');
+            setSavedAsPattern(true);
+        }
+        onSend(message.id, text);
+    };
+
+    const handleSavePattern = async () => {
+        if (!onRecordOverride) return;
+        await onRecordOverride(dialogueId, text, message.text || '');
+        setSavedAsPattern(true);
+    };
 
     return (
         <div className="flex justify-end w-full">
@@ -48,16 +64,28 @@ const DraftMessage: React.FC<DraftMessageProps> = ({ message, onSend, onRegenera
                     onChange={(e) => setText(e.target.value)}
                 />
 
-                <div className="flex justify-between items-center">
+                <div className="flex justify-between items-center gap-2 flex-wrap">
                     <div className="text-[10px] text-muted-foreground">
                         AI Generated • Not sent
+                        {savedAsPattern && <span className="ml-2 text-emerald-600">🧠 saved as pattern</span>}
                     </div>
-                    <button
-                        onClick={handleSend}
-                        className="bg-indigo-600 text-white px-3 py-1.5 rounded-md text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1 transition-colors"
-                    >
-                        <Send className="w-3 h-3" /> Send Now
-                    </button>
+                    <div className="flex gap-2">
+                        {onRecordOverride && !savedAsPattern && text.trim() !== (message.text || '').trim() && (
+                            <button
+                                onClick={handleSavePattern}
+                                className="bg-emerald-100 text-emerald-700 px-2 py-1.5 rounded-md text-xs hover:bg-emerald-200"
+                                title="Сохранить как обучающий паттерн (бот будет использовать в похожих диалогах)"
+                            >
+                                🧠 Save pattern
+                            </button>
+                        )}
+                        <button
+                            onClick={handleSend}
+                            className="bg-indigo-600 text-white px-3 py-1.5 rounded-md text-xs font-semibold hover:bg-indigo-700 flex items-center gap-1 transition-colors"
+                        >
+                            <Send className="w-3 h-3" /> Send Now
+                        </button>
+                    </div>
                 </div>
             </div>
         </div>
@@ -237,12 +265,14 @@ const ChatWindow: React.FC<ChatWindowProps> = ({ dialogue, actions }) => {
                             <DraftMessage
                                 key={msg.id}
                                 message={msg}
+                                dialogueId={dialogue.id}
                                 onSend={actions.confirmDraft}
                                 onRegenerate={async (id) => {
                                     await actions.deleteMessage(id);
                                     actions.regenerateResponse(dialogue.id);
                                 }}
                                 onDelete={actions.deleteMessage}
+                                onRecordOverride={actions.recordOverride}
                             />
                         );
                     }

@@ -96,6 +96,11 @@ export async function upgradeStatusOnSend(dialogueId: number) {
                 const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
                 console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
                 emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
+                // Mirror to dialogue.outcome for Conversation Brain
+                await prisma.dialogue.updateMany({
+                    where: { id: dialogueId, outcome: { in: ['IN_PROGRESS', 'DROPPED_ICED', 'DROPPED_NO_REPLY'] } },
+                    data: { outcome: 'QUALIFIED' },
+                }).catch(() => { });
                 // Stats: mark recent OutreachAttempts (≤30 days) as LEAD-converted
                 const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
                 await prisma.outreachAttempt.updateMany({

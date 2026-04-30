@@ -271,6 +271,26 @@ export async function startListener(_page?: any) {
         });
         const allRules = [...ctx.rulesGlobal, ...userRules.map(r => r.content)];
 
+        // ── Conversation Brain: top-3 LearnedScenarios for current stage ────
+        // These are accumulated patterns (operator overrides + auto-analyzer
+        // outputs). Mixed into the prompt so the bot uses real-life what-works.
+        try {
+            const scenarios = await prisma.learnedScenario.findMany({
+                where: { stage: currentStage, isActive: true },
+                orderBy: [{ successScore: 'desc' }, { usageCount: 'desc' }],
+                take: 3,
+            });
+            for (const s of scenarios) {
+                const block = `LEARNED PATTERN: ${s.trigger} → reply pattern: ${s.recommend}${s.avoid ? ` | AVOID: ${s.avoid}` : ''}`;
+                allRules.push(block);
+                // Bump usage counter (best-effort)
+                prisma.learnedScenario.update({
+                    where: { id: s.id },
+                    data: { usageCount: { increment: 1 }, lastUsedAt: new Date() },
+                }).catch(() => { });
+            }
+        } catch (_) { /* brain table may not exist yet on first deploy */ }
+
         const recentMessages = await prisma.message.findMany({
             where: { dialogueId: dialogue.id },
             orderBy: { id: 'desc' },

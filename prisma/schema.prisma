@@ -120,11 +120,21 @@ model Dialogue {
   status    DialogueStatus @default(ACTIVE)
   stage     DialogueStage  @default(DISCOVERY)
   source    DialogueSource @default(INBOUND)
+  outcome   DialogueOutcome @default(IN_PROGRESS)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   messages   Message[]
   scoutLeads ScoutLead[]
+}
+
+enum DialogueOutcome {
+  IN_PROGRESS       // active conversation, not concluded yet
+  DROPPED_NO_REPLY  // user never replied to our outreach
+  DROPPED_ICED      // user replied once or twice and went silent
+  QUALIFIED         // bot reached QUALIFIED user status
+  MATCHED           // user got matched with someone
+  CUSTOMER          // closed deal / paying
 }
 
 model Message {
@@ -249,6 +259,26 @@ model IgnoreTrigger {
   keyword   String   @unique
   type      String   @default("KEYWORD") // KEYWORD, USERNAME, PHONE
   createdAt DateTime @default(now())
+}
+
+// Conversation Brain — accumulated patterns extracted from real dialogues.
+// Source: human-in-loop (operator overrides) + auto-analyzer (daily cron).
+// Used by listener: top-K active scenarios for the current stage are mixed
+// into the system prompt as few-shot guidance.
+model LearnedScenario {
+  id          Int      @id @default(autoincrement())
+  stage       DialogueStage   // when does this pattern apply
+  trigger     String          // text-описание ситуации ("user dodges with 'see profile'")
+  recommend   String          // what to say (concrete reply or pattern)
+  avoid       String?         // what NOT to say
+  source      String   @default("manual") // manual | human_override | auto_analyzer
+  successScore Float   @default(0)        // 0..1 — how often this leads to engagement
+  usageCount   Int     @default(0)
+  isActive     Boolean @default(true)
+  createdAt    DateTime @default(now())
+  updatedAt    DateTime @updatedAt
+  lastUsedAt   DateTime?
+  notes        String?         // operator notes
 }
 
 enum ProfileStatus {

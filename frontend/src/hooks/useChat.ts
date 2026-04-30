@@ -278,6 +278,22 @@ export const useChat = () => {
         } catch (e) { console.error(e); alert('Failed'); }
     };
 
+    const recordOverride = async (dialogueId: number, operatorMessage: string, replacedDraft?: string) => {
+        try {
+            const res = await fetch('/brain/record-override', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ dialogueId, operatorMessage, replacedDraft }),
+            });
+            if (!res.ok) throw new Error('Failed to record override');
+            const data = await res.json();
+            return data.scenario;
+        } catch (e) {
+            console.error(e);
+            return null;
+        }
+    };
+
     const fullReset = async () => {
         const a = prompt('ВНИМАНИЕ: это полностью сотрёт всех юзеров, диалоги, сообщения, scout. Введите "WIPE" чтобы подтвердить:');
         if (a !== 'WIPE') return;
@@ -334,5 +350,6 @@ export const useChat = () => {
         cleanupDrafts,
         resetDialogue,
         fullReset,
+        recordOverride,
     };
 };

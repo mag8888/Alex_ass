@@ -385,6 +385,105 @@ fastify.get('/broadcast/stats', async (req, reply) => {
     }
 });
 
+// ── Conversation Brain: LearnedScenario CRUD ───────────────────────────────
+fastify.get('/brain/scenarios', async (req, reply) => {
+    const { stage, source, active } = req.query as { stage?: string; source?: string; active?: string };
+    const where: any = {};
+    if (stage) where.stage = stage;
+    if (source) where.source = source;
+    if (active === '1') where.isActive = true;
+    const items = await prisma.learnedScenario.findMany({
+        where,
+        orderBy: [{ successScore: 'desc' }, { usageCount: 'desc' }, { createdAt: 'desc' }],
+    });
+    return items;
+});
+
+fastify.post('/brain/scenarios', async (req, reply) => {
+    const body = req.body as any;
+    if (!body?.stage || !body?.trigger || !body?.recommend) {
+        return reply.code(400).send({ error: 'stage + trigger + recommend required' });
+    }
+    const item = await prisma.learnedScenario.create({
+        data: {
+            stage: body.stage,
+            trigger: body.trigger,
+            recommend: body.recommend,
+            avoid: body.avoid,
+            source: body.source || 'manual',
+            notes: body.notes,
+            isActive: body.isActive !== false,
+        },
+    });
+    return item;
+});
+
+fastify.put('/brain/scenarios/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const body = req.body as any;
+    try {
+        const item = await prisma.learnedScenario.update({
+            where: { id: Number(id) },
+            data: {
+                trigger: body.trigger,
+                recommend: body.recommend,
+                avoid: body.avoid,
+                stage: body.stage,
+                isActive: body.isActive,
+                notes: body.notes,
+            },
+        });
+        return item;
+    } catch (e: any) {
+        return reply.code(404).send({ error: e.message });
+    }
+});
+
+fastify.delete('/brain/scenarios/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    await prisma.learnedScenario.delete({ where: { id: Number(id) } }).catch(() => { });
+    return { success: true };
+});
+
+// Human-in-loop: record an operator override as a LearnedScenario.
+// Called when operator manually sends a reply that diverges from the AI draft.
+fastify.post('/brain/record-override', async (req, reply) => {
+    const { dialogueId, operatorMessage, replacedDraft } = req.body as {
+        dialogueId: number;
+        operatorMessage: string;
+        replacedDraft?: string;
+    };
+    if (!dialogueId || !operatorMessage) return reply.code(400).send({ error: 'dialogueId + operatorMessage required' });
+    try {
+        const dialogue = await prisma.dialogue.findUnique({
+            where: { id: dialogueId },
+            include: {
+                messages: { orderBy: { id: 'desc' }, take: 6 },
+                user: true,
+            },
+        });
+        if (!dialogue) return reply.code(404).send({ error: 'dialogue not found' });
+
+        // The user's last message = trigger context
+        const lastUserMsg = dialogue.messages.find((m: any) => m.sender === 'USER');
+        if (!lastUserMsg) return reply.code(400).send({ error: 'no user message in history' });
+
+        const item = await prisma.learnedScenario.create({
+            data: {
+                stage: dialogue.stage,
+                trigger: `User said: "${lastUserMsg.text.slice(0, 200)}"`,
+                recommend: operatorMessage.slice(0, 1000),
+                avoid: replacedDraft ? `AI initially proposed: "${replacedDraft.slice(0, 300)}"` : null,
+                source: 'human_override',
+                notes: `Captured from dialogue ${dialogueId} (@${dialogue.user.username || dialogue.user.telegramId})`,
+            },
+        });
+        return { success: true, scenario: item };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // Resolve a list of @usernames to TG IDs and check Wave Match registration
 fastify.post('/admin/check-tg-users', async (req, reply) => {
     const { usernames } = (req.body || {}) as { usernames: string[] };
