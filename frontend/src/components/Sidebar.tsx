@@ -1,7 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useChat } from '../hooks/useChat';
-import { Search, RotateCw, Plus, MessageSquare, Binoculars, Megaphone } from 'lucide-react';
+import { Search, RotateCw, Plus, MessageSquare, Binoculars, Megaphone, Brain } from 'lucide-react';
 import BroadcastModal from './BroadcastModal';
+import BrainModal from './BrainModal';
 import { DialogueSource, UserStatus } from '../types';
 import { getScoutChats, addScoutChat } from '../api';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -27,6 +28,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
     const [newChatLink, setNewChatLink] = useState('');
     const [showAddChat, setShowAddChat] = useState(false);
     const [showBroadcast, setShowBroadcast] = useState(false);
+    const [showBrain, setShowBrain] = useState(false);
 
     const {
         dialogues,
@@ -122,6 +124,13 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
                                 title="Рассылка по базе"
                             >
                                 <Megaphone className="h-5 w-5" />
+                            </button>
+                            <button
+                                onClick={() => setShowBrain(true)}
+                                className="p-2 hover:bg-purple-500/10 rounded-md transition-colors text-purple-500"
+                                title="Conversation Brain — обучающие паттерны"
+                            >
+                                <Brain className="h-5 w-5" />
                             </button>
                             <button
                                 onClick={syncChats}
@@ -270,6 +279,7 @@ const Sidebar: React.FC<SidebarProps> = ({ chatState }) => {
             </div>
 
             {showBroadcast && <BroadcastModal onClose={() => setShowBroadcast(false)} />}
+            {showBrain && <BrainModal onClose={() => setShowBrain(false)} />}
 
             {/* Connection Status Footer */}
             <div className="p-3 border-t border-border bg-muted/30 text-xs safe-bottom">

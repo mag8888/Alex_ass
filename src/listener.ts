@@ -14,6 +14,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
+import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
 // ── Hot cache for Rules / KB / Triggers ──────────────────────────────────────
@@ -270,6 +271,22 @@ export async function startListener(_page?: any) {
             where: { userId: user.id, isActive: true },
         });
         const allRules = [...ctx.rulesGlobal, ...userRules.map(r => r.content)];
+
+        // ── Principle #12: auto-fetch external context (links / @handles) ──
+        // If the user just shared a t.me link, channel handle, or URL — pull
+        // the public content so the bot doesn't ask them to repeat themselves.
+        try {
+            const external = await fetchExternalContext(text);
+            if (external.length > 0) {
+                const block = formatExternalContext(external);
+                if (block) {
+                    allRules.push(block);
+                    console.log(`[external-context] Fetched ${external.length} source(s) for dialogue ${dialogue.id}`);
+                }
+            }
+        } catch (e: any) {
+            console.warn('[external-context] error:', e.message);
+        }
 
         // ── Conversation Brain: top-3 LearnedScenarios for current stage ────
         // These are accumulated patterns (operator overrides + auto-analyzer

@@ -17,6 +17,7 @@ import { seedScenarios } from './scenarios';
 import { previewBroadcast, sendBroadcast, backfillGender, findAudience, AudienceFilter } from './broadcast';
 import { isWMEnabled, ensureWebhookSubscription } from './wmClient';
 import { verifySignature, handleWMEvent } from './webhookHandler';
+import { runDailyAnalyzer, startBrainAnalyzerCron } from './brainAnalyzer';
 
 const fastify = Fastify({ logger: true });
 
@@ -385,6 +386,43 @@ fastify.get('/broadcast/stats', async (req, reply) => {
     }
 });
 
+// ── Business Card: generate / fetch cached / send to user ──────────────────
+fastify.post('/users/:id/business-card', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { force } = (req.query || {}) as { force?: string };
+    try {
+        const { generateBusinessCard, getCachedCard } = await import('./businessCard');
+        if (!force) {
+            const cached = await getCachedCard(Number(id));
+            if (cached) return { ...cached, fromCache: true };
+        }
+        const result = await generateBusinessCard(Number(id), { force: true });
+        if (!result) return reply.code(500).send({ error: 'Generation failed' });
+        return { ...result, fromCache: false };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// Send the brief or full card directly into the user's dialogue (replacing
+// any draft). Used by the operator action buttons.
+fastify.post('/users/:id/send-card', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { variant } = (req.body || {}) as { variant: 'brief' | 'full' };
+    try {
+        const { getCachedCard } = await import('./businessCard');
+        const card = await getCachedCard(Number(id));
+        if (!card) return reply.code(404).send({ error: 'No cached card; generate first' });
+        const text = variant === 'full' ? card.full : card.brief;
+        const dialogue = await prisma.dialogue.findFirst({ where: { userId: Number(id), status: 'ACTIVE' } });
+        if (!dialogue) return reply.code(404).send({ error: 'No active dialogue' });
+        await sendMessageToUser(Number(id), text);
+        return { success: true };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Conversation Brain: LearnedScenario CRUD ───────────────────────────────
 fastify.get('/brain/scenarios', async (req, reply) => {
     const { stage, source, active } = req.query as { stage?: string; source?: string; active?: string };
@@ -443,6 +481,16 @@ fastify.delete('/brain/scenarios/:id', async (req, reply) => {
     const { id } = req.params as { id: string };
     await prisma.learnedScenario.delete({ where: { id: Number(id) } }).catch(() => { });
     return { success: true };
+});
+
+// Manually trigger the daily analyzer (also runs automatically at 04:00 UTC)
+fastify.post('/brain/analyze-now', async (req, reply) => {
+    try {
+        const result = await runDailyAnalyzer();
+        return result;
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
 });
 
 // Human-in-loop: record an operator override as a LearnedScenario.
@@ -2031,6 +2079,8 @@ const start = async () => {
             // Seed broadcast scenarios + backfill gender from names
             try { await seedScenarios(); } catch (e) { console.error('[STARTUP] seedScenarios failed:', e); }
             try { await backfillGender(); } catch (e) { console.error('[STARTUP] backfillGender failed:', e); }
+            // Start the Brain analyzer cron (runs daily at 04:00 UTC)
+            try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {

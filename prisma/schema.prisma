@@ -45,6 +45,11 @@ model User {
   notifiedNew     Boolean  @default(false) // Admin already got "new lead" notification
   notifiedLead    Boolean  @default(false) // Admin already got "promoted to LEAD" notification
 
+  // Auto-generated business cards (cached, regenerated on demand)
+  briefCard       String?     // 1-2 sentences for partner display
+  fullCard        String?     // structured multiline card with all known data
+  cardGeneratedAt DateTime?
+
   // Demographics (auto-derived from firstName for RU names; can be overridden)
   gender          Gender   @default(UNKNOWN)
 
