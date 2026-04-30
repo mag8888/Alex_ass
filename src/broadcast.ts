@@ -118,6 +118,8 @@ export interface SendOptions {
     templateId: number;
     userIds: number[];
     mode: 'draft' | 'auto';
+    /** Suppress final notifyAdmin pings (for high-frequency auto-queue) */
+    silent?: boolean;
 }
 
 export interface SendResult {
@@ -170,10 +172,12 @@ export async function sendBroadcast(opts: SendOptions): Promise<SendResult> {
         }
     }
 
-    if (failed.length > 0) {
-        await notifyAdmin(`⚠️ Broadcast: ${failed.length} ошибок из ${users.length}. Шаблон "${template.name}".`);
-    } else {
-        await notifyAdmin(`✅ Broadcast "${template.name}": ${opts.mode === 'auto' ? sent : queued} ${opts.mode === 'auto' ? 'отправлено' : 'черновиков создано'}.`);
+    if (!opts.silent) {
+        if (failed.length > 0) {
+            await notifyAdmin(`⚠️ Broadcast: ${failed.length} ошибок из ${users.length}. Шаблон "${template.name}".`);
+        } else {
+            await notifyAdmin(`✅ Broadcast "${template.name}": ${opts.mode === 'auto' ? sent : queued} ${opts.mode === 'auto' ? 'отправлено' : 'черновиков создано'}.`);
+        }
     }
 
     return { queued, sent, failed };

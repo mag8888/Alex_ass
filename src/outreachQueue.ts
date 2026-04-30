@@ -123,6 +123,35 @@ async function pickNextCandidate(): Promise<Candidate | null> {
                 if (local.lastBroadcastAt && local.lastBroadcastAt > cutoff) continue;
             }
 
+            // Можем ли мы вообще DM-нуть этого юзера?
+            // Числовой telegramId БЕЗ accessHash → Telegram не сможет резолвить.
+            // Пропускаем (попадёт обратно в очередь только если в WM появится @username
+            // или мы где-то получим accessHash).
+            const isNumeric = /^\d+$/.test(tgId);
+            const hasAccessHash = !!local?.accessHash;
+            if (isNumeric && !hasAccessHash) {
+                console.log(`[outreach-queue] skip ${tgId} — numeric ID without accessHash`);
+                // Зафиксируем попытку чтобы не циклиться: проставим lastBroadcastAt только
+                // если локальная запись есть (если нет — на следующем тике не выберем
+                // т.к. итерация идёт по WM-странице с тем же cursor=undefined → но WM
+                // может вернуть других тоже; всё равно будем циклиться. Создаём stub:
+                if (!local) {
+                    await prisma.user.create({
+                        data: {
+                            telegramId: tgId,
+                            firstName: wmUser.firstName || null,
+                            lastBroadcastAt: new Date(),  // в cooldown сразу
+                        },
+                    }).catch(() => { });
+                } else {
+                    await prisma.user.update({
+                        where: { id: local.id },
+                        data: { lastBroadcastAt: new Date() },
+                    }).catch(() => { });
+                }
+                continue;
+            }
+
             const firstName = wmUser.firstName || (typeof tgId === 'string' ? tgId : 'друг');
             return {
                 telegramId: tgId,
@@ -217,6 +246,7 @@ export async function tickOutreachQueue(force = false): Promise<{ skipped?: stri
         templateId,
         userIds: [user.id],
         mode: 'auto',
+        silent: true,  // sched сам пишет персональный notifyAdmin при успехе
     });
 
     if (result.sent > 0) {
@@ -228,6 +258,11 @@ export async function tickOutreachQueue(force = false): Promise<{ skipped?: stri
         const errMsg = result.failed[0]?.error || 'unknown';
         lastResult = `failed: ${errMsg}`;
         console.warn(`[outreach-queue] send failed for uid=${user.id}: ${errMsg}`);
+        // Cooldown тоже на фейле — иначе тот же юзер выпадет на следующем тике.
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { lastBroadcastAt: new Date() },
+        }).catch(() => { });
         return { skipped: `send-failed: ${errMsg}` };
     }
 }
