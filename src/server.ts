@@ -490,6 +490,28 @@ fastify.delete('/brain/scenarios/:id', async (req, reply) => {
     return { success: true };
 });
 
+// ── Match engine: preview top matches for a user ──────────────────────────
+fastify.get('/users/:id/match-candidates', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const { findMatches } = await import('./matchEngine');
+    try {
+        const matches = await findMatches(Number(id), { limit: 5, minScore: 3 });
+        return matches.map(m => ({
+            userId: m.user.id,
+            firstName: m.user.firstName,
+            username: m.user.username,
+            telegramId: m.user.telegramId,
+            score: m.score,
+            reasons: m.reasons,
+            activity: m.user.activity,
+            city: m.user.city,
+            hobbies: m.user.hobbies,
+        }));
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Outreach queue admin endpoints ──────────────────────────────────────────
 fastify.get('/outreach-queue/status', async () => getOutreachQueueStatus());
 fastify.post('/outreach-queue/pause', async () => { pauseOutreachQueue(); return { ok: true, ...getOutreachQueueStatus() }; });
