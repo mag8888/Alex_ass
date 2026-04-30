@@ -178,8 +178,20 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        // ── Mark as read ────────────────────────────────────────────────────
+        // ── Mark as read + set 👌 reaction ───────────────────────────────────
+        // Roman: "если человек что-то написал и ты просмотрел — ставь эмодзи"
+        // (👌 = OK / получил; нейтрально для любого инбаунда).
         try { await message.markAsRead(); } catch (_) { }
+        try {
+            await client.invoke(new Api.messages.SendReaction({
+                peer: message.peerId,
+                msgId: message.id,
+                reaction: [new Api.ReactionEmoji({ emoticon: '👌' })],
+            }));
+        } catch (e: any) {
+            // REACTION_INVALID / not allowed / older TG client — silent skip
+            console.log(`[react] skip msg=${message.id}: ${e.message?.slice(0, 80)}`);
+        }
 
         // ── Save inbound message + ensure user/dialogue ─────────────────────
         const { user, dialogue } = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
