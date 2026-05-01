@@ -25,6 +25,12 @@ import {
     resumeOutreachQueue,
     getOutreachQueueStatus,
 } from './outreachQueue';
+import {
+    startPendingSendsTick,
+    cancelPending,
+    isPending,
+    getPendingStatus,
+} from './pendingSends';
 
 const fastify = Fastify({ logger: true });
 
@@ -511,6 +517,57 @@ fastify.get('/users/:id/match-candidates', async (req, reply) => {
         return reply.code(500).send({ error: e.message });
     }
 });
+
+// ── Quick-action: tap-to-send / tap-to-cancel from admin DM links ───────────
+// Userbot не может ставить inline-buttons, поэтому в DM кладём HTTPS-ссылки.
+// GET-эндпоинты (один-тап в Telegram), отвечают простым HTML.
+const QA_PAGE = (title: string, body: string) =>
+    `<!DOCTYPE html><meta charset="utf-8"><title>${title}</title>
+     <body style="font-family:-apple-system,sans-serif;background:#0b0b0b;color:#eee;display:flex;align-items:center;justify-content:center;min-height:100vh;margin:0">
+     <div style="text-align:center;padding:24px;max-width:480px">
+       <h1 style="font-size:48px;margin:0">${title}</h1>
+       <p style="font-size:18px;line-height:1.5;color:#aaa">${body}</p>
+     </div></body>`;
+
+fastify.get('/qa/send/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const msgId = Number(id);
+    try {
+        const msg = await prisma.message.findUnique({ where: { id: msgId } });
+        if (!msg) {
+            reply.type('text/html');
+            return QA_PAGE('❓ Не найдено', `Message #${msgId} not found.`);
+        }
+        if (msg.status !== 'DRAFT') {
+            reply.type('text/html');
+            return QA_PAGE('ℹ️ Уже отправлено', `Драфт #${msgId} уже не в статусе DRAFT (текущий: ${msg.status}).`);
+        }
+        cancelPending(msgId);
+        await sendDraftMessage(null, msgId);
+        reply.type('text/html');
+        return QA_PAGE('✅ Отправлено', `Драфт #${msgId} ушёл получателю.`);
+    } catch (e: any) {
+        reply.type('text/html');
+        return QA_PAGE('⚠️ Ошибка', e.message);
+    }
+});
+
+fastify.get('/qa/cancel/:id', async (req, reply) => {
+    const { id } = req.params as { id: string };
+    const msgId = Number(id);
+    const wasPending = isPending(msgId);
+    cancelPending(msgId);
+    try {
+        await prisma.message.delete({ where: { id: msgId } });
+    } catch (_) { /* уже удалён */ }
+    reply.type('text/html');
+    return QA_PAGE(
+        wasPending ? '❌ Отменено' : 'ℹ️ Уже не в очереди',
+        `Драфт #${msgId} ${wasPending ? 'удалён, авто-отправки не будет.' : 'не висел в pending — возможно, уже отправлен или удалён ранее.'}`,
+    );
+});
+
+fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 
 // ── Multi-part send (cold outreach / WhatsApp-style sequence) ───────────────
 fastify.post('/users/:id/send-multipart', async (req, reply) => {
@@ -2140,6 +2197,7 @@ const start = async () => {
             // Start the Brain analyzer cron (runs daily at 04:00 UTC)
             try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
             try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
+            try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {
