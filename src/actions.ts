@@ -189,7 +189,21 @@ export async function sendDraftMessage(page: any, messageId: number, customText?
             console.log(`[Msg] Sending to @${username}: "${text}"`);
         }
 
-        await client.sendMessage(peer, { message: text });
+        // Multi-part marker: split & send each part with delay (WhatsApp-style)
+        if (text && text.includes('---SPLIT---')) {
+            const parts = text.split(/---SPLIT---/g).map(p => p.trim()).filter(Boolean);
+            if (parts.length > 1) {
+                console.log(`[Msg] Splitting into ${parts.length} parts`);
+                for (let i = 0; i < parts.length; i++) {
+                    if (i > 0) await new Promise(r => setTimeout(r, 1500 + Math.floor(Math.random() * 1000)));
+                    await client.sendMessage(peer, { message: parts[i] });
+                }
+            } else {
+                await client.sendMessage(peer, { message: parts[0] || text });
+            }
+        } else {
+            await client.sendMessage(peer, { message: text });
+        }
         console.log(`[Msg] Sent approved message to ${username}`);
 
         // Status upgrade: NEW→CHAT, CHAT→LEAD on 3rd send
