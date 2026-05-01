@@ -124,11 +124,35 @@ export async function startListener(_page?: any) {
         let text = message.text || "";
         let isVoice = false;
 
-        // Skip messages from admin themselves to avoid feedback loops with notifyAdmin.
-        // Still mark as read so the admin sees the bot is alive (double tick).
+        // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
+        // НО: если у админа есть pendingTeaser/pendingCard от welcome-flow тестирования —
+        // обрабатываем consent и доставляем pending. Это позволяет Роману
+        // самому тестировать поток на своём аккаунте.
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
             try { await message.markAsRead(); } catch (_) { }
-            console.log(`[Listener] Skipping message from admin @${username} (marked as read)`);
+            try {
+                const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
+                if (adminUser) {
+                    const facts = (adminUser.facts as any) || {};
+                    const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
+                    if (consentRe.test(text)) {
+                        if (facts.pendingTeaser) {
+                            const client = getClient();
+                            await client?.sendMessage(username, { message: facts.pendingTeaser });
+                            delete facts.pendingTeaser;
+                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
+                            console.log(`[Listener] (admin-test) Delivered pending teaser to @${username}`);
+                        } else if (facts.pendingCard) {
+                            const client = getClient();
+                            await client?.sendMessage(username, { message: facts.pendingCard });
+                            delete facts.pendingCard;
+                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
+                            console.log(`[Listener] (admin-test) Delivered pending card to @${username}`);
+                        }
+                    }
+                }
+            } catch (e: any) { console.warn(`[Listener admin-test] err:`, e.message); }
+            console.log(`[Listener] Skipping GPT-reply for admin @${username}`);
             return;
         }
 
