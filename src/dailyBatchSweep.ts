@@ -11,6 +11,8 @@ import { listUsers, getUserByTelegramId, isWMEnabled } from './wmClient';
 import { ensureUserAndDialogue, sendMessageToUser, sendMultipart } from './actions';
 import { detectGender } from './gender';
 import { notifyAdmin } from './notify';
+import { enrichProfile } from './profileEnricher';
+import { buildWelcomeMessages } from './welcomeBuilder';
 
 // Окно: 9-21 МСК = 06:00-18:00 UTC (Москва UTC+3, без DST)
 const WINDOW_START_UTC = 6;              // 09:00 МСК
@@ -192,33 +194,53 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
         'INBOUND',
     );
 
-    // Skip if already contacted
     const hasContact = await prisma.message.count({
         where: { dialogueId: dialogue.id, sender: { in: ['OPERATOR', 'SIMULATOR'] } },
     });
     if (hasContact > 0) return { ok: false, warm: false, reason: 'already contacted' };
 
-    // Гендер
     if (user.gender === 'UNKNOWN' && wm.firstName) {
         const g = detectGender(wm.firstName);
         if (g !== 'UNKNOWN') await prisma.user.update({ where: { id: user.id }, data: { gender: g } });
     }
 
-    // autoReply=on — диалог дальше идёт автономно
     await prisma.user.update({
         where: { id: user.id },
         data: { autoReply: true, lastBroadcastAt: new Date() },
     });
 
-    const built = buildWelcome(wm);
+    // ── 3-stage welcome (Принцип #17) ────────────────────────────────────
+    // Stage 1+2: intro + тизер анализа (если есть public sources)
+    // Stage 3: карточка готовится в кэш юзера (facts) — листенер пришлёт
+    //          её когда юзер согласится ("да", "прислать", "интересно")
+    let warm = false;
     try {
-        if (built.isMultipart) {
-            const parts = built.text.split(/---SPLIT---/g).map(p => p.trim()).filter(Boolean);
-            await sendMultipart(user.id, parts);
-        } else {
-            await sendMessageToUser(user.id, built.text);
+        const enriched = await enrichProfile(wm.username);
+        const msgs = buildWelcomeMessages(enriched);
+
+        const partsToSend = [msgs.stage1];
+        if (msgs.stage2) {
+            partsToSend.push(msgs.stage2);
+            warm = true;
         }
-        return { ok: true, warm: !built.isMultipart, uid: user.id, firstName: built.firstName };
+
+        // Сохраняем готовую карточку (Stage 3) в facts юзера, чтобы listener
+        // мог достать её при ответе "да"/"прислать"/"интересно"
+        if (msgs.hasEnrichment) {
+            const facts = (user.facts as any) || {};
+            facts.pendingCard = msgs.stage3;
+            await prisma.user.update({
+                where: { id: user.id },
+                data: { facts: facts as any },
+            });
+        }
+
+        if (partsToSend.length > 1) {
+            await sendMultipart(user.id, partsToSend);
+        } else {
+            await sendMessageToUser(user.id, partsToSend[0]);
+        }
+        return { ok: true, warm, uid: user.id, firstName: enriched.firstName || wm.firstName || undefined };
     } catch (e: any) {
         return { ok: false, warm: false, reason: `send fail: ${e.message}` };
     }
