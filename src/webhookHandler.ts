@@ -4,7 +4,7 @@ import { invalidateCache, addAiNote, type WMUser, type WMProfile } from './wmCli
 import { notifyAdmin, notifyLeads } from './notify';
 import { ensureUserAndDialogue, sendMessageToUser, createDraftMessage } from './actions';
 import { generateResponse } from './gpt';
-import { applyGender, preferredFirstName } from './gender';
+import { preferredFirstName } from './gender';
 
 const WEBHOOK_SECRET = process.env.WAVE_CONNECT_WEBHOOK_SECRET || process.env.WM_WEBHOOK_SECRET || '';
 // REPLAY_WINDOW in SECONDS (matches Wave Match spec: X-WC-Timestamp is Unix seconds)
@@ -125,31 +125,36 @@ async function sendWelcome(wm: WMUser) {
         'INBOUND',
     );
 
-    // ── Gender-aware fallback ────────────────────────────────────────────
-    // Used when the GPT call fails. Anchors with "ты регистрировался(-ась) у нас",
-    // value in one breath, then ONE open question.
-    // Prefer WM firstName (canonical, set by user themselves) over the local
-    // value which might be a transliteration or ambiguous nickname.
+    // ── Always-Вы fallback ───────────────────────────────────────────────
+    // Used when the GPT call fails. Multipart (3 short bursts) — позиционирует
+    // бота как «Ваш персональный менеджер по нетворкингу», два понятных оффера
+    // (визитка + знакомства), один открытый вопрос. Прямой запрос Романа.
     const firstName = preferredFirstName(user.firstName, wm.firstName);
-    const fallbackTpl =
-        `${firstName}, привет! ` +
-        `{Ты регистрировался|Ты регистрировалась|Вы регистрировались} у нас в Wave Match — мы помогаем находить нужных людей под твои запросы.\n` +
-        `Расскажи в двух словах: что сейчас актуально — клиенты, партнёры или спецы под задачу? Дальше я подберу подходящих людей из базы. Можно голосом 🎙️`;
-    const fallbackText = applyGender(fallbackTpl, user.gender);
+    const fallbackText =
+        `${firstName}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш персональный менеджер по нетворкингу.\n` +
+        `---SPLIT---\n` +
+        `Помогу с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы.\n` +
+        `---SPLIT---\n` +
+        `Расскажите коротко — что сейчас актуально: клиенты, партнёры или спецы под задачу? Можно голосом 🎙️`;
 
-    // ── GPT instructions: explicit anti-spam framing ─────────────────────
+    // ── GPT instructions: persona = personal networking manager ──────────
     const customInstructions = [
-        'CONTEXT: This is the FIRST outreach to a Wave Match user who just completed registration on the platform.',
-        'The user has NOT messaged the bot before — they may be confused why a stranger is DM-ing them.',
+        'CONTEXT: This is the FIRST outreach to a Wave Match user who just completed registration. They have NOT messaged the bot before.',
         '',
-        'CRITICAL: the message must NOT feel like cold spam. Required structure (2-4 short lines, in this order):',
-        '1) "{firstName}, привет!" (no "Здравствуйте", no "Уважаемый")',
-        `2) Anchor: explicitly remind them they REGISTERED on Wave Match. Use the correct gendered form: ${user.gender === 'FEMALE' ? '"ты регистрировалась у нас в Wave Match"' : user.gender === 'MALE' ? '"ты регистрировался у нас в Wave Match"' : '"вы регистрировались у нас в Wave Match"'}.`,
-        '3) Value in one phrase: "помогаем найти нужных людей под твои запросы" (or natural variation).',
-        '4) ONE open question: что сейчас актуально / какие запросы есть / нужны клиенты, партнёры, исполнители.',
-        '5) End with a SOFT voice option: "можно голосом 🎙️" — never push.',
+        'PERSONA: You are their PERSONAL NETWORKING MANAGER inside Wave Match. Position yourself as a dedicated human who will personally help them find the right contacts. Not a chatbot, not a help-desk.',
         '',
-        'Keep it short (40-70 words). No corporate tone. No menus. No follow-up questions in the same message.',
+        'STRUCTURE: 3 short bursts separated by `---SPLIT---` on its own line. The runtime sends each burst as a separate Telegram message with a 1-3s delay (WhatsApp-style).',
+        '',
+        'BURST 1 (greeting + identity): "{firstName}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш персональный менеджер по нетворкингу."',
+        'BURST 2 (two value props): "Помогу с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы." (you may rephrase but keep both props)',
+        'BURST 3 (open question + soft voice): "Расскажите коротко — что сейчас актуально: клиенты, партнёры или спецы под задачу? Можно голосом 🎙️"',
+        '',
+        'RULES:',
+        '- ALWAYS use "Вы" (Вам, Вас, Ваш). NEVER "ты" — even if the user might use it later.',
+        '- No corporate openers ("Давайте", "Готов помочь", "С удовольствием").',
+        '- No mirror, no flattery, no self-pitch.',
+        '- ONE open question total, in the last burst.',
+        '- Do NOT skip the ---SPLIT--- markers.',
     ].join('\n');
 
     const result = await generateResponse(
