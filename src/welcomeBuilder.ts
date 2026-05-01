@@ -17,16 +17,20 @@ function cleanFirstName(raw: string | null | undefined): string {
 }
 
 export interface WelcomeMessages {
-    stage1: string;                    // знакомство + причина
-    stage2: string | null;             // тизер анализа (null если нет публичных источников)
-    stage3: string;                    // готовая карточка (отправлять только после consent)
-    hasEnrichment: boolean;            // есть ли что прислать в Stage 3
+    stage1: string;                    // знакомство + причина + soft-вопрос про networking + ask про визитку
+    stage2: string | null;             // "посмотрел страницы — собрать визитку, прислать?" (null если нет источников)
+    stage3: string;                    // готовая карточка (отправлять только после второго consent)
+    hasEnrichment: boolean;
 }
 
 export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages {
     const fn = cleanFirstName(profile.firstName);
 
-    const stage1 = `${fn}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш ассистент по нетворкингу. Помогаю участникам соединяться по запросам через ИИ-матчинг.`;
+    const stage1 =
+        `${fn}, добрый день!\n\n` +
+        `Вы регистрировались у нас в Wave Match — я Ваш ассистент по нетворкингу.\n\n` +
+        `Помогаю участникам соединяться по запросам через ИИ-матчинг. Вам актуальны сейчас нетворкинг и, возможно, новые партнёрства?\n\n` +
+        `Я могу помочь составить интересную визитку, Вам интересно?`;
 
     let stage2: string | null = null;
     if (profile.hasPublicSources) {

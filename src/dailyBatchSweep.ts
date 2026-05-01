@@ -210,36 +210,32 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
     });
 
     // ── 3-stage welcome (Принцип #17) ────────────────────────────────────
-    // Stage 1+2: intro + тизер анализа (если есть public sources)
-    // Stage 3: карточка готовится в кэш юзера (facts) — листенер пришлёт
-    //          её когда юзер согласится ("да", "прислать", "интересно")
+    // Stage 1: intro + ask про networking + ask про визитку — единое
+    // Stage 2: "посмотрел страницы — прислать визитку?" — после consent
+    // Stage 3: карточка с просьбой "что поменять?" — после второго consent
+    // Stage 2 и Stage 3 хранятся в facts.pendingTeaser / facts.pendingCard
+    // и отправляются listener-ом при детекте интереса.
     let warm = false;
     try {
         const enriched = await enrichProfile(wm.username);
         const msgs = buildWelcomeMessages(enriched);
 
-        const partsToSend = [msgs.stage1];
+        const facts = (user.facts as any) || {};
         if (msgs.stage2) {
-            partsToSend.push(msgs.stage2);
+            facts.pendingTeaser = msgs.stage2;
             warm = true;
         }
-
-        // Сохраняем готовую карточку (Stage 3) в facts юзера, чтобы listener
-        // мог достать её при ответе "да"/"прислать"/"интересно"
         if (msgs.hasEnrichment) {
-            const facts = (user.facts as any) || {};
             facts.pendingCard = msgs.stage3;
+        }
+        if (msgs.stage2 || msgs.hasEnrichment) {
             await prisma.user.update({
                 where: { id: user.id },
                 data: { facts: facts as any },
             });
         }
 
-        if (partsToSend.length > 1) {
-            await sendMultipart(user.id, partsToSend);
-        } else {
-            await sendMessageToUser(user.id, partsToSend[0]);
-        }
+        await sendMessageToUser(user.id, msgs.stage1);
         return { ok: true, warm, uid: user.id, firstName: enriched.firstName || wm.firstName || undefined };
     } catch (e: any) {
         return { ok: false, warm: false, reason: `send fail: ${e.message}` };
