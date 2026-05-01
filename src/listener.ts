@@ -180,21 +180,8 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        // ── Mark as read + set context-aware reaction ────────────────────────
-        // Roman: "ставь эмодзи в тему". pickReaction подбирает по тону/контенту:
-        // 🙏 thanks, 🤝 deal, 🎉 done, 🔥 fire, ⚡ short-yes, ❤ heart, 😁 lol,
-        // 😢 sad, 🤯 wow, 🤔 unclear, 👀 curious, ✍ profile-data, 👌 default OK.
+        // ── Mark as read (reaction now fires AFTER successful reply, not here) ─
         try { await message.markAsRead(); } catch (_) { }
-        try {
-            const emoji = pickReaction(text);
-            await client.invoke(new Api.messages.SendReaction({
-                peer: message.peerId,
-                msgId: message.id,
-                reaction: [new Api.ReactionEmoji({ emoticon: emoji })],
-            }));
-        } catch (e: any) {
-            console.log(`[react] skip msg=${message.id}: ${e.message?.slice(0, 80)}`);
-        }
 
         // ── Save inbound message + ensure user/dialogue ─────────────────────
         const { user, dialogue } = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
@@ -440,10 +427,14 @@ export async function startListener(_page?: any) {
         }
 
         // ── Send (auto-mode) or stash as draft ──────────────────────────────
+        // Roman: эмодзи-реакция ставится только когда бот реально ответил —
+        // не превентивно, чтобы юзер не видел "просмотрено и забыто".
+        let replyDispatched = false;
         if (user.autoReply) {
             try {
                 await sendMessageToUser(user.id, gptResult.reply);
                 console.log(`[Listener] Auto-sent reply to @${username}`);
+                replyDispatched = true;
             } catch (sendErr: any) {
                 console.error(`[Listener] Auto-send failed:`, sendErr.message);
                 await notifyAdmin(`⚠️ Не смог автоотправить @${username}: ${sendErr.message}`, { rateLimitKey: 'send-error' });
@@ -452,12 +443,26 @@ export async function startListener(_page?: any) {
         } else {
             const draft = await createDraftMessage(dialogue.id, gptResult.reply);
             emitEvent({ type: 'message:draft', dialogueId: dialogue.id, userId: user.id, text: gptResult.reply });
-            // Pending auto-send: 10-min countdown unless admin clicks ✅/❌
             try {
                 enqueuePending(draft.id, dialogue.id);
                 await notifyAdminAboutPending(draft.id, dialogue.id, gptResult.reply);
+                replyDispatched = true;  // pending тоже считаем за "ответим" (через 10 мин)
             } catch (e: any) {
                 console.warn('[pending] enqueue err:', e.message);
+            }
+        }
+
+        // ── Reaction AFTER reply dispatched ──────────────────────────────────
+        if (replyDispatched) {
+            try {
+                const emoji = pickReaction(text);
+                await client.invoke(new Api.messages.SendReaction({
+                    peer: message.peerId,
+                    msgId: message.id,
+                    reaction: [new Api.ReactionEmoji({ emoticon: emoji })],
+                }));
+            } catch (e: any) {
+                console.log(`[react] skip msg=${message.id}: ${e.message?.slice(0, 80)}`);
             }
         }
     }, new NewMessage({ incoming: true }));
