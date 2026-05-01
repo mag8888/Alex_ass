@@ -569,6 +569,29 @@ fastify.get('/qa/cancel/:id', async (req, reply) => {
 
 fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 
+// ── WM recent-registrations (debug / admin sweep) ──────────────────────────
+fastify.get('/admin/wm-recent', async (req, reply) => {
+    const { sinceHours = '24', limit = '50' } = req.query as { sinceHours?: string; limit?: string };
+    try {
+        const { listUsers, isWMEnabled } = await import('./wmClient');
+        if (!isWMEnabled()) return reply.code(503).send({ error: 'WM not configured' });
+        const since = new Date(Date.now() - Number(sinceHours) * 3600_000).toISOString();
+        const page = await listUsers({ limit: Math.min(Number(limit), 100), updatedSince: since });
+        const items = (page.items || []).map((u: any) => ({
+            id: u.id,
+            telegramId: u.telegramId,
+            username: u.username || null,
+            firstName: u.firstName || null,
+            createdAt: u.createdAt,
+            updatedAt: u.updatedAt,
+            registered: u.registered,
+        }));
+        return { sinceHours: Number(sinceHours), count: items.length, items };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Multi-part send (cold outreach / WhatsApp-style sequence) ───────────────
 fastify.post('/users/:id/send-multipart', async (req, reply) => {
     const { id } = req.params as { id: string };
