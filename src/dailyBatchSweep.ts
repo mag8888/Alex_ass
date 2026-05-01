@@ -221,14 +221,10 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
         const msgs = buildWelcomeMessages(enriched);
 
         const facts = (user.facts as any) || {};
-        if (msgs.stage2) {
-            facts.pendingTeaser = msgs.stage2;
+        if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
+            facts.pendingCardBrief = msgs.cardBrief;
+            facts.pendingCardFull = msgs.cardFull;
             warm = true;
-        }
-        if (msgs.hasEnrichment) {
-            facts.pendingCard = msgs.stage3;
-        }
-        if (msgs.stage2 || msgs.hasEnrichment) {
             await prisma.user.update({
                 where: { id: user.id },
                 data: { facts: facts as any },

@@ -136,18 +136,15 @@ export async function startListener(_page?: any) {
                     const facts = (adminUser.facts as any) || {};
                     const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
                     if (consentRe.test(text)) {
-                        if (facts.pendingTeaser) {
+                        if (facts.pendingCardBrief && facts.pendingCardFull) {
                             const client = getClient();
-                            await client?.sendMessage(username, { message: facts.pendingTeaser });
-                            delete facts.pendingTeaser;
+                            await client?.sendMessage(username, { message: facts.pendingCardBrief });
+                            await new Promise(r => setTimeout(r, 1500));
+                            await client?.sendMessage(username, { message: facts.pendingCardFull });
+                            delete facts.pendingCardBrief;
+                            delete facts.pendingCardFull;
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered pending teaser to @${username}`);
-                        } else if (facts.pendingCard) {
-                            const client = getClient();
-                            await client?.sendMessage(username, { message: facts.pendingCard });
-                            delete facts.pendingCard;
-                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered pending card to @${username}`);
+                            console.log(`[Listener] (admin-test) Delivered brief+full cards to @${username}`);
                         }
                     }
                 }
@@ -221,30 +218,23 @@ export async function startListener(_page?: any) {
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
-        // ── 3-stage welcome — Stage 2/3 отправляются после consent ────────
-        // Stage 2 (тизер "посмотрел страницы — прислать?") — на consent после Stage 1
-        // Stage 3 (карточка) — на consent после Stage 2
-        // GPT всё равно сгенерит свой реплай ниже — там будет hand-off.
+        // ── Welcome flow Stage 2 — отправка brief + full визитки на consent ─
+        // Юзер ответил "да/интересно/давай" на Stage 1 → шлём краткую И полную
+        // визитки сразу (без повторного "прислать?"). GPT сгенерит свой реплай
+        // ниже — он увидит контекст и сделает hand-off, не задавая ту же тему.
         try {
             const facts = (user.facts as any) || {};
-            const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|давай|ок|окей)(?:$|\P{L})/iu;
-            const consent = consentRe.test(text);
-            if (consent) {
-                if (facts.pendingTeaser) {
-                    // Юзер ответил "да/интересно" на Stage 1 → шлём Stage 2 (тизер)
-                    await sendMessageToUser(user.id, facts.pendingTeaser);
-                    delete facts.pendingTeaser;
-                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
-                    console.log(`[listener] Sent stage-2 teaser to @${username}`);
-                } else if (facts.pendingCard) {
-                    // Юзер ответил "да" на Stage 2 (тизер) → шлём Stage 3 (карточка)
-                    await sendMessageToUser(user.id, facts.pendingCard);
-                    delete facts.pendingCard;
-                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
-                    console.log(`[listener] Sent stage-3 card to @${username}`);
-                }
+            const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
+            if (consentRe.test(text) && facts.pendingCardBrief && facts.pendingCardFull) {
+                await sendMessageToUser(user.id, facts.pendingCardBrief);
+                await new Promise(r => setTimeout(r, 1500));
+                await sendMessageToUser(user.id, facts.pendingCardFull);
+                delete facts.pendingCardBrief;
+                delete facts.pendingCardFull;
+                await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+                console.log(`[listener] Sent brief+full cards to @${username}`);
             }
-        } catch (e: any) { console.warn('[welcome-stages] err:', e.message); }
+        } catch (e: any) { console.warn('[welcome-cards] err:', e.message); }
 
         // ── Partnership-intent detector (Принцип #16) ────────────────────────
         // Hot signal — escalate to Roman directly, GPT-prompt уже знает что делать
