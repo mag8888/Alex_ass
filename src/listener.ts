@@ -197,24 +197,30 @@ export async function startListener(_page?: any) {
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
-        // ── Pending visit card (Stage 3 после consent) ────────────────────────
-        // dailyBatchSweep сохраняет в facts.pendingCard готовую карточку — если
-        // юзер согласился её увидеть, отдаём её прямо сейчас и убираем из facts,
-        // чтобы listener не вываливал карточку повторно.
+        // ── 3-stage welcome — Stage 2/3 отправляются после consent ────────
+        // Stage 2 (тизер "посмотрел страницы — прислать?") — на consent после Stage 1
+        // Stage 3 (карточка) — на consent после Stage 2
+        // GPT всё равно сгенерит свой реплай ниже — там будет hand-off.
         try {
             const facts = (user.facts as any) || {};
-            if (facts.pendingCard) {
-                const consent = /\b(да|давайте|давай|интересно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|сюда)\b/iu.test(text)
-                    || /^\s*(?:да|ок|окей|давайте|интересно|покажи)[!.\s]*$/iu.test(text);
-                if (consent) {
+            const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|давай|ок|окей)(?:$|\P{L})/iu;
+            const consent = consentRe.test(text);
+            if (consent) {
+                if (facts.pendingTeaser) {
+                    // Юзер ответил "да/интересно" на Stage 1 → шлём Stage 2 (тизер)
+                    await sendMessageToUser(user.id, facts.pendingTeaser);
+                    delete facts.pendingTeaser;
+                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+                    console.log(`[listener] Sent stage-2 teaser to @${username}`);
+                } else if (facts.pendingCard) {
+                    // Юзер ответил "да" на Stage 2 (тизер) → шлём Stage 3 (карточка)
                     await sendMessageToUser(user.id, facts.pendingCard);
                     delete facts.pendingCard;
                     await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
-                    console.log(`[listener] Sent pending card to @${username}`);
-                    // GPT всё равно сгенерит реплай ниже — он увидит контекст и сделает hand-off
+                    console.log(`[listener] Sent stage-3 card to @${username}`);
                 }
             }
-        } catch (e: any) { console.warn('[pending-card] err:', e.message); }
+        } catch (e: any) { console.warn('[welcome-stages] err:', e.message); }
 
         // ── Partnership-intent detector (Принцип #16) ────────────────────────
         // Hot signal — escalate to Roman directly, GPT-prompt уже знает что делать
