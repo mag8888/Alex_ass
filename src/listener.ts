@@ -15,6 +15,7 @@ import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './notify';
 import { isVoiceMessage, transcribeVoice } from './voice';
 import { pickReaction } from './reactionPicker';
+import { enqueuePending, notifyAdminAboutPending } from './pendingSends';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
@@ -451,6 +452,13 @@ export async function startListener(_page?: any) {
         } else {
             const draft = await createDraftMessage(dialogue.id, gptResult.reply);
             emitEvent({ type: 'message:draft', dialogueId: dialogue.id, userId: user.id, text: gptResult.reply });
+            // Pending auto-send: 10-min countdown unless admin clicks ✅/❌
+            try {
+                enqueuePending(draft.id, dialogue.id);
+                await notifyAdminAboutPending(draft.id, dialogue.id, gptResult.reply);
+            } catch (e: any) {
+                console.warn('[pending] enqueue err:', e.message);
+            }
         }
     }, new NewMessage({ incoming: true }));
 }
