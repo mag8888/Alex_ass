@@ -141,10 +141,15 @@ export async function startListener(_page?: any) {
                             await client?.sendMessage(username, { message: facts.pendingCardBrief });
                             await new Promise(r => setTimeout(r, 1500));
                             await client?.sendMessage(username, { message: facts.pendingCardFull });
+                            if (facts.pendingCardGaps) {
+                                await new Promise(r => setTimeout(r, 1500));
+                                await client?.sendMessage(username, { message: facts.pendingCardGaps });
+                            }
                             delete facts.pendingCardBrief;
                             delete facts.pendingCardFull;
+                            delete facts.pendingCardGaps;
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered brief+full cards to @${username}`);
+                            console.log(`[Listener] (admin-test) Delivered brief+full+gaps to @${username}`);
                         }
                     }
                 }
@@ -229,10 +234,15 @@ export async function startListener(_page?: any) {
                 await sendMessageToUser(user.id, facts.pendingCardBrief);
                 await new Promise(r => setTimeout(r, 1500));
                 await sendMessageToUser(user.id, facts.pendingCardFull);
+                if (facts.pendingCardGaps) {
+                    await new Promise(r => setTimeout(r, 1500));
+                    await sendMessageToUser(user.id, facts.pendingCardGaps);
+                }
                 delete facts.pendingCardBrief;
                 delete facts.pendingCardFull;
+                delete facts.pendingCardGaps;
                 await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
-                console.log(`[listener] Sent brief+full cards to @${username}`);
+                console.log(`[listener] Sent brief+full+gaps to @${username}`);
             }
         } catch (e: any) { console.warn('[welcome-cards] err:', e.message); }
 

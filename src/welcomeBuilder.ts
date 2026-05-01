@@ -20,6 +20,7 @@ export interface WelcomeMessages {
     stage1: string;                    // знакомство + причина + soft-вопрос + ask про визитку
     cardBrief: string | null;          // 1-предложение визитка (null если нет источников)
     cardFull: string | null;           // структурированная полная визитка + "что поменять?"
+    cardGaps: string | null;           // предложение добавить недостающие поля для матчинга
     hasEnrichment: boolean;
 }
 
@@ -33,7 +34,7 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         `Я могу помочь составить интересную визитку, Вам интересно?`;
 
     if (!profile.hasPublicSources) {
-        return { stage1, cardBrief: null, cardFull: null, hasEnrichment: false };
+        return { stage1, cardBrief: null, cardFull: null, cardGaps: null, hasEnrichment: false };
     }
 
     // ── Brief визитка (1 предложение) ─────────────────────────────────
@@ -75,5 +76,19 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
 
     const cardFull = `Полная визитка:\n\n${fullLines.join('\n')}\n\nЧто бы Вы поменяли или добавили?`;
 
-    return { stage1, cardBrief, cardFull, hasEnrichment: true };
+    // ── Gap analysis: что бы помогло матчингу но отсутствует ──────────
+    // WM-схема для матчинга использует: hobbies / interests / bestClients /
+    // requests / networkingGoal. Карточка из public sources их не покрывает —
+    // предлагаем юзеру кратко заполнить через диалог.
+    const gapItems: string[] = [];
+    gapItems.push('• Хобби — для подбора по личным интересам');
+    gapItems.push('• Темы или сферы, что сейчас интересны (книги, психология, инвестиции…)');
+    gapItems.push('• Кого ищете — клиенты, партнёры или специалисты под задачу');
+    gapItems.push('• Запросы по жизни — отношения, развитие, окружение');
+    const cardGaps =
+        `Также для лучшего матчинга было бы полезно дополнить визитку:\n\n` +
+        gapItems.join('\n') +
+        `\n\nЕсли хотите — расскажите коротко по одному из пунктов.`;
+
+    return { stage1, cardBrief, cardFull, cardGaps, hasEnrichment: true };
 }

@@ -224,6 +224,7 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
         if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
             facts.pendingCardBrief = msgs.cardBrief;
             facts.pendingCardFull = msgs.cardFull;
+            if (msgs.cardGaps) facts.pendingCardGaps = msgs.cardGaps;
             warm = true;
             await prisma.user.update({
                 where: { id: user.id },
