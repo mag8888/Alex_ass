@@ -124,50 +124,17 @@ export async function startListener(_page?: any) {
         let text = message.text || "";
         let isVoice = false;
 
-        // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
-        // НО: если у админа есть pendingTeaser/pendingCard от welcome-flow тестирования —
-        // обрабатываем consent и доставляем pending. Это позволяет Роману
-        // самому тестировать поток на своём аккаунте.
-        if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
-            try { await message.markAsRead(); } catch (_) { }
-            try {
-                const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
-                if (adminUser) {
-                    const facts = (adminUser.facts as any) || {};
-                    const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
-                    if (consentRe.test(text)) {
-                        if (facts.pendingCardBrief && facts.pendingCardFull) {
-                            const client = getClient();
-                            await client?.sendMessage(username, { message: facts.pendingCardBrief });
-                            await new Promise(r => setTimeout(r, 1500));
-                            await client?.sendMessage(username, { message: facts.pendingCardFull });
-                            if (facts.pendingCardGaps) {
-                                await new Promise(r => setTimeout(r, 1500));
-                                await client?.sendMessage(username, { message: facts.pendingCardGaps });
-                            }
-                            delete facts.pendingCardBrief;
-                            delete facts.pendingCardFull;
-                            delete facts.pendingCardGaps;
-                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered brief+full+gaps to @${username}`);
-                        }
-                    }
-                }
-            } catch (e: any) { console.warn(`[Listener admin-test] err:`, e.message); }
-            console.log(`[Listener] Skipping GPT-reply for admin @${username}`);
-            return;
-        }
-
-        // ── Voice message → Whisper transcription ───────────────────────────
+        // ── Voice message → Whisper transcription (BEFORE admin-skip) ──────
+        // Перенесли наверх, чтобы admin voice тоже расшифровывался — Роман
+        // тестирует на своём аккаунте через voice.
         if (isVoiceMessage(message)) {
             isVoice = true;
             console.log(`[Listener] Voice message from @${username}, downloading...`);
             try {
                 const buf = await client.downloadMedia(message);
                 if (buf && Buffer.isBuffer(buf)) {
-                    // Last 5 messages of dialogue as Whisper hint (improves names/jargon)
                     const ctxMsgs = await prisma.message.findMany({
-                        where: { dialogueId: { in: [] } }, // placeholder, filled below if dialogue exists
+                        where: { dialogueId: { in: [] } },
                         orderBy: { id: 'desc' }, take: 5,
                     }).catch(() => []);
                     const hint = ctxMsgs.map(m => m.text).join('\n');
@@ -185,6 +152,48 @@ export async function startListener(_page?: any) {
                 console.error(`[Listener] Voice download/transcription error:`, e.message);
                 text = '[голосовое сообщение, ошибка обработки]';
             }
+        }
+
+        // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
+        // НО: voice от админа сохраняем + если есть pendingCardBrief/Full — обрабатываем consent.
+        if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
+            try { await message.markAsRead(); } catch (_) { }
+            try {
+                const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
+                if (adminUser) {
+                    // Сохраняем voice-транскрипт как USER-RECEIVED, чтобы Роман видел в /dialogues/52
+                    if (isVoice && text) {
+                        const adminDlg = await prisma.dialogue.findFirst({ where: { userId: adminUser.id }, orderBy: { id: 'desc' } });
+                        if (adminDlg) {
+                            await prisma.message.create({
+                                data: { dialogueId: adminDlg.id, sender: 'USER', text: `🎙️ ${text}`, status: 'RECEIVED' },
+                            }).catch(() => { });
+                            console.log(`[Listener admin-voice] Saved transcript: ${text.substring(0, 100)}`);
+                        }
+                    }
+                    const facts = (adminUser.facts as any) || {};
+                    const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
+                    if (consentRe.test(text)) {
+                        if (facts.pendingCardBrief && facts.pendingCardFull) {
+                            const cl = getClient();
+                            await cl?.sendMessage(username, { message: facts.pendingCardBrief });
+                            await new Promise(r => setTimeout(r, 1500));
+                            await cl?.sendMessage(username, { message: facts.pendingCardFull });
+                            if (facts.pendingCardGaps) {
+                                await new Promise(r => setTimeout(r, 1500));
+                                await cl?.sendMessage(username, { message: facts.pendingCardGaps });
+                            }
+                            delete facts.pendingCardBrief;
+                            delete facts.pendingCardFull;
+                            delete facts.pendingCardGaps;
+                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
+                            console.log(`[Listener] (admin-test) Delivered brief+full+gaps to @${username}`);
+                        }
+                    }
+                }
+            } catch (e: any) { console.warn(`[Listener admin-test] err:`, e.message); }
+            console.log(`[Listener] Skipping GPT-reply for admin @${username}`);
+            return;
         }
 
         if (!text) {
