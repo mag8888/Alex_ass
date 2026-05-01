@@ -571,13 +571,13 @@ fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 
 // ── WM recent-registrations (debug / admin sweep) ──────────────────────────
 fastify.get('/admin/wm-recent', async (req, reply) => {
-    const { sinceHours = '24', limit = '50' } = req.query as { sinceHours?: string; limit?: string };
+    const { sinceHours = '24', limit = '50', enrich = '0' } = req.query as { sinceHours?: string; limit?: string; enrich?: string };
     try {
-        const { listUsers, isWMEnabled } = await import('./wmClient');
+        const { listUsers, getUserByTelegramId, isWMEnabled } = await import('./wmClient');
         if (!isWMEnabled()) return reply.code(503).send({ error: 'WM not configured' });
         const since = new Date(Date.now() - Number(sinceHours) * 3600_000).toISOString();
         const page = await listUsers({ limit: Math.min(Number(limit), 100), updatedSince: since });
-        const items = (page.items || []).map((u: any) => ({
+        let items = (page.items || []).map((u: any) => ({
             id: u.id,
             telegramId: u.telegramId,
             username: u.username || null,
@@ -586,6 +586,28 @@ fastify.get('/admin/wm-recent', async (req, reply) => {
             updatedAt: u.updatedAt,
             registered: u.registered,
         }));
+        // Enrich: for each item without username, fetch full record (parallel, capped)
+        if (enrich === '1') {
+            const enriched = await Promise.all(items.slice(0, 50).map(async (it) => {
+                if (it.username || !it.telegramId) return it;
+                try {
+                    const full: any = await getUserByTelegramId(it.telegramId, 'profile');
+                    if (full) {
+                        return {
+                            ...it,
+                            username: full.username || null,
+                            firstName: full.firstName || it.firstName,
+                            wmRole: full.profile?.role || null,
+                            wmIndustry: full.profile?.industry || null,
+                            wmLocation: full.profile?.location || null,
+                            wmCompletion: full.profile?.completion ?? null,
+                        };
+                    }
+                } catch (_) { /* skip */ }
+                return it;
+            }));
+            items = enriched.concat(items.slice(50));
+        }
         return { sinceHours: Number(sinceHours), count: items.length, items };
     } catch (e: any) {
         return reply.code(500).send({ error: e.message });
