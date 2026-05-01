@@ -17,9 +17,9 @@ function cleanFirstName(raw: string | null | undefined): string {
 }
 
 export interface WelcomeMessages {
-    stage1: string;                    // знакомство + причина + soft-вопрос про networking + ask про визитку
-    stage2: string | null;             // "посмотрел страницы — собрать визитку, прислать?" (null если нет источников)
-    stage3: string;                    // готовая карточка (отправлять только после второго consent)
+    stage1: string;                    // знакомство + причина + soft-вопрос + ask про визитку
+    cardBrief: string | null;          // 1-предложение визитка (null если нет источников)
+    cardFull: string | null;           // структурированная полная визитка + "что поменять?"
     hasEnrichment: boolean;
 }
 
@@ -32,45 +32,48 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         `Помогаю участникам соединяться по запросам через ИИ-матчинг. Вам актуальны сейчас нетворкинг и, возможно, новые партнёрства?\n\n` +
         `Я могу помочь составить интересную визитку, Вам интересно?`;
 
-    let stage2: string | null = null;
-    if (profile.hasPublicSources) {
-        stage2 = 'Я посмотрел Ваши публичные страницы — могу собрать визитку, чтобы подбирать релевантных партнёров. Прислать?';
+    if (!profile.hasPublicSources) {
+        return { stage1, cardBrief: null, cardFull: null, hasEnrichment: false };
     }
 
-    // Card sourcing — что нашли
-    const cardLines: string[] = [];
-    cardLines.push(`👤 ${profile.igFullName || fn}${profile.username ? ` (@${profile.username})` : ''}`);
+    // ── Brief визитка (1 предложение) ─────────────────────────────────
+    const briefParts: string[] = [];
+    const fullName = profile.igFullName || fn;
+    briefParts.push(fullName);
 
-    // Activity = WM role + industry
     const activity: string[] = [];
     if (profile.wmRole) activity.push(profile.wmRole);
     if (profile.wmIndustry && profile.wmIndustry !== profile.wmRole) activity.push(profile.wmIndustry);
-    if (activity.length > 0) cardLines.push(`🎯 Род деятельности: ${activity.join(' / ')}`);
+    if (activity.length > 0) briefParts.push(activity.join(' + '));
 
-    // Brand from website
     const primarySite = profile.websites[0];
+    if (primarySite?.title) briefParts.push(primarySite.title.slice(0, 80));
+
+    if (profile.wmLocation) briefParts.push(profile.wmLocation);
+
+    const brief = briefParts.join('. ') + '.';
+    const cardBrief = `Краткая визитка:\n\n«${brief}»`;
+
+    // ── Полная визитка (структурированная) ────────────────────────────
+    const fullLines: string[] = [];
+    fullLines.push(`👤 ${fullName}${profile.username ? ` (@${profile.username})` : ''}`);
+    if (activity.length > 0) fullLines.push(`🎯 Род деятельности: ${activity.join(' / ')}`);
     if (primarySite) {
-        if (primarySite.title) cardLines.push(`🏢 Бренд: ${primarySite.title.slice(0, 100)}`);
-        cardLines.push(`🌐 Сайт: ${primarySite.url}`);
+        if (primarySite.title) fullLines.push(`🏢 Бренд: ${primarySite.title.slice(0, 100)}`);
+        fullLines.push(`🌐 Сайт: ${primarySite.url}`);
     }
-
-    if (profile.wmLocation) cardLines.push(`📍 Локация: ${profile.wmLocation}`);
-
+    if (profile.wmLocation) fullLines.push(`📍 Локация: ${profile.wmLocation}`);
     if (profile.igHandle) {
-        const followers = profile.igFollowers ? ` (${profile.igFollowers >= 1000 ? `${Math.round(profile.igFollowers / 100) / 10}K` : profile.igFollowers} подписчиков)` : '';
-        cardLines.push(`📸 Instagram: @${profile.igHandle}${followers}`);
+        const followers = profile.igFollowers
+            ? ` (${profile.igFollowers >= 1000 ? `${Math.round(profile.igFollowers / 100) / 10}K` : profile.igFollowers} подписчиков)`
+            : '';
+        fullLines.push(`📸 Instagram: @${profile.igHandle}${followers}`);
     }
-
     if (primarySite?.description) {
-        cardLines.push(`💡 Подход: ${primarySite.description.slice(0, 200)}`);
+        fullLines.push(`💡 Подход: ${primarySite.description.slice(0, 200)}`);
     }
 
-    const stage3 = `Вот что собрал из публичных источников:\n\n${cardLines.join('\n')}\n\nЧто бы Вы поменяли или добавили?`;
+    const cardFull = `Полная визитка:\n\n${fullLines.join('\n')}\n\nЧто бы Вы поменяли или добавили?`;
 
-    return {
-        stage1,
-        stage2,
-        stage3,
-        hasEnrichment: profile.hasPublicSources,
-    };
+    return { stage1, cardBrief, cardFull, hasEnrichment: true };
 }
