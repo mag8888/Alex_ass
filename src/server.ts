@@ -604,6 +604,24 @@ fastify.post('/admin/meetup-followup/tick-now', async (req, reply) => {
     try { return await tickMeetupFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
+// ── Admin: manual WM profile patch ──────────────────────────────────────────
+// Прямой patchProfile на WM юзера. Используется когда нужно сразу применить
+// данные (полученные напр. голосом от админа, минуя GPT-extraction).
+fastify.post('/admin/wm/users/:wmId/patch-profile', async (req, reply) => {
+    const { wmId } = req.params as { wmId: string };
+    const body = req.body as any;
+    try {
+        const { patchProfile, getCachedEtag, isWMEnabled } = await import('./wmClient');
+        if (!isWMEnabled()) return reply.code(503).send({ error: 'WM not configured' });
+        const etag = getCachedEtag(wmId);
+        const result = await patchProfile(wmId, body, { ifMatch: etag });
+        if (!result) return reply.code(409).send({ error: 'patchProfile returned null (ETag mismatch or 4xx)' });
+        return { success: true, completion: (result.user.profile as any)?.completion, profile: result.user.profile };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── New users scanner: status + manual trigger ──────────────────────────────
 fastify.get('/admin/new-users-scanner/status', async () => getNewUsersScannerStatus());
 fastify.post('/admin/new-users-scanner/tick-now', async (req, reply) => {
