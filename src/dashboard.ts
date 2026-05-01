@@ -51,11 +51,11 @@ async function buildComponents(): Promise<Component[]> {
     return [
         // ─── ВВОД (новые юзеры) ──────────────────────────────────────────────
         {
-            name: '☀️ Daily Morning Batch (10:00 МСК)',
-            description: 'Каждый день в 10:00 МСК сервер сам берёт ~25 свежих WM-юзеров и шлёт персонализированный welcome (warm/cold по профилю). Полная автономия, не зависит от компа.',
+            name: '🌊 Working-Hours Outreach (9-21 МСК)',
+            description: 'Непрерывный sweep во всё рабочее окно. Каждые 30 мин шлёт по 2 свежих WM-юзера (всего ~30/день), warm = 1 message / cold = 3-burst. autoReply=on, диалог дальше идёт автономно. Без участия локального компа.',
             stage: 'LIVE',
-            metric: `всего отправлено: ${daily.totalSent} | last: ${daily.lastFiredKey || '—'} | summary: ${daily.lastBatchSummary || '—'}`,
-            nextStep: 'После завтрашнего первого автозапуска — посмотреть delivery rate и tunнуть пейсинг',
+            metric: `сегодня: ${daily.dailySent}/${daily.dailyTarget} | сейчас: ${daily.workingNow ? '🟢 в окне' : '⏸ вне окна'} (msk=${daily.moscowHour}:00) | total lifetime: ${daily.totalSent}`,
+            nextStep: daily.lastBatchSummary || '—',
         },
         {
             name: 'newUsersScanner',

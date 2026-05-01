@@ -1,9 +1,10 @@
-// ── Daily Morning Batch Sweep ─────────────────────────────────────────────
-// Roman: "завтра с 10.00 мск шлём, нужно выстроить так чтоб всё работало
-// даже если отключить этот комп". Каждый день в 10:00 МСК (07:00 UTC) сервер
-// сам берёт ~25 свежих WM-юзеров, шлёт персонализированный welcome
-// (warm = 1 message, cold = 3-burst), ставит autoReply=true. Полностью
-// серверная автономия — ничего не нужно с локального компа.
+// ── Working-Hours Outreach Sweep ──────────────────────────────────────────
+// Roman: "запуск рассылки в рабочее время с 9.00 мск до 21.00 мск".
+// Непрерывный sweep во всё окно 9-21 МСК (= 06:00-18:00 UTC). Каждые 30 мин:
+// берёт 2-3 свежих WM-юзера, шлёт персонализированный welcome (warm 1 msg,
+// cold 3-burst), ставит autoReply=true. Дневной лимит 30 — равномерно
+// распределяется по 12-часовому окну. Полностью серверный, не зависит от
+// локального компа.
 
 import prisma from './db';
 import { listUsers, getUserByTelegramId, isWMEnabled } from './wmClient';
@@ -11,46 +12,79 @@ import { ensureUserAndDialogue, sendMessageToUser, sendMultipart } from './actio
 import { detectGender } from './gender';
 import { notifyAdmin } from './notify';
 
-const TARGET_HOUR_UTC = 7;              // 07:00 UTC = 10:00 МСК
-const TICK_CHECK_MS = 5 * 60 * 1000;    // проверяем каждые 5 мин
-const DAILY_TARGET = 25;                 // плановое количество приветствий/день
-const PER_USER_PACE_MS = 60_000;        // 60 сек между каждой отправкой
+// Окно: 9-21 МСК = 06:00-18:00 UTC (Москва UTC+3, без DST)
+const WINDOW_START_UTC = 6;              // 09:00 МСК
+const WINDOW_END_UTC = 18;               // 21:00 МСК (exclusive)
+const TICK_MS = 30 * 60 * 1000;          // тик каждые 30 мин
+const PER_TICK_TARGET = 2;               // 2 юзера/тик → 24 тика × 2 = 48 потолок
+const DAILY_TARGET = 30;                 // дневной лимит (мягкий cap)
+const PER_USER_PACE_MS = 30_000;         // 30 сек между юзерами в одном тике
 
-let lastFiredKey = '';                   // 'YYYY-MM-DD' — даты последнего запуска
+let dailyKeyUTC = '';                    // YYYY-MM-DD текущего дня (UTC)
+let dailySent = 0;                       // отправлено за день
 let timer: ReturnType<typeof setInterval> | null = null;
 let lastTickAt: Date | null = null;
 let lastBatchSummary: string | null = null;
-let totalSent = 0;
+let totalSent = 0;                       // lifetime
 let isRunning = false;
 
 export interface DailyBatchStatus {
     enabled: boolean;
-    targetHourUTC: number;
-    targetHourMSK: number;
+    windowStartMSK: number;
+    windowEndMSK: number;
     dailyTarget: number;
-    lastFiredKey: string;
+    perTickTarget: number;
+    tickMinutes: number;
+    dailyKeyUTC: string;
+    dailySent: number;
+    workingNow: boolean;
+    moscowHour: number;
     lastTickAt: string | null;
     lastBatchSummary: string | null;
     totalSent: number;
     isRunning: boolean;
 }
 
+function todayKeyUTC(): string {
+    return new Date().toISOString().slice(0, 10);
+}
+
+function moscowHour(): number {
+    const utcH = new Date().getUTCHours();
+    return (utcH + 3) % 24;
+}
+
+function inWorkingWindow(): boolean {
+    const utcH = new Date().getUTCHours();
+    return utcH >= WINDOW_START_UTC && utcH < WINDOW_END_UTC;
+}
+
+function ensureDailyCounter() {
+    const k = todayKeyUTC();
+    if (k !== dailyKeyUTC) {
+        dailyKeyUTC = k;
+        dailySent = 0;
+    }
+}
+
 export function getDailyBatchStatus(): DailyBatchStatus {
+    ensureDailyCounter();
     return {
         enabled: timer !== null,
-        targetHourUTC: TARGET_HOUR_UTC,
-        targetHourMSK: TARGET_HOUR_UTC + 3,
+        windowStartMSK: WINDOW_START_UTC + 3,
+        windowEndMSK: WINDOW_END_UTC + 3,
         dailyTarget: DAILY_TARGET,
-        lastFiredKey,
+        perTickTarget: PER_TICK_TARGET,
+        tickMinutes: TICK_MS / 60000,
+        dailyKeyUTC,
+        dailySent,
+        workingNow: inWorkingWindow(),
+        moscowHour: moscowHour(),
         lastTickAt: lastTickAt?.toISOString() || null,
         lastBatchSummary,
         totalSent,
         isRunning,
     };
-}
-
-function todayKeyUTC(): string {
-    return new Date().toISOString().slice(0, 10);
 }
 
 interface FullWMUser {
@@ -190,28 +224,39 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
     }
 }
 
-async function runBatch() {
+// Один тик: до PER_TICK_TARGET юзеров с пейсингом
+async function runOneTick(force: boolean = false) {
     if (isRunning) {
-        console.log('[daily-batch] already running, skip');
+        console.log('[ws] tick skip — already running');
         return;
     }
+    ensureDailyCounter();
+
+    if (!force) {
+        if (!inWorkingWindow()) {
+            lastBatchSummary = `outside-window (msk=${moscowHour()}:00)`;
+            return;
+        }
+        if (dailySent >= DAILY_TARGET) {
+            lastBatchSummary = `daily-cap-${DAILY_TARGET}`;
+            return;
+        }
+    }
+
     isRunning = true;
     lastTickAt = new Date();
-    const startedAt = Date.now();
 
     try {
-        await notifyAdmin(`☀️ Утренний batch стартовал в ${new Date().toLocaleString('ru')}. План: ${DAILY_TARGET} приветствий с пейсингом 60с (~${Math.round(DAILY_TARGET * 60 / 60)} мин).`, { rateLimitKey: 'daily-batch-start' });
-
-        const candidates = await pickCandidates(DAILY_TARGET);
-        console.log(`[daily-batch] candidates: ${candidates.length}`);
+        const remaining = Math.max(0, DAILY_TARGET - dailySent);
+        const want = Math.min(PER_TICK_TARGET, remaining || PER_TICK_TARGET);
+        const candidates = await pickCandidates(want);
+        console.log(`[ws] tick candidates=${candidates.length} (want=${want}, sent today=${dailySent})`);
 
         if (candidates.length === 0) {
-            lastBatchSummary = 'no fresh candidates in WM';
-            await notifyAdmin('⚠️ Утренний batch: нет свежих кандидатов в WM. Возможно нужно дождаться новых регистраций.', { rateLimitKey: 'daily-batch-empty' });
+            lastBatchSummary = `no fresh (sent today=${dailySent}/${DAILY_TARGET})`;
             return;
         }
 
-        let warmOk = 0, coldOk = 0, fail = 0;
         const sentNames: string[] = [];
         const failNames: string[] = [];
 
@@ -219,11 +264,10 @@ async function runBatch() {
             const c = candidates[i];
             const r = await welcomeOne(c);
             if (r.ok) {
-                if (r.warm) warmOk++; else coldOk++;
+                dailySent++;
                 totalSent++;
                 sentNames.push(`@${c.username}`);
             } else {
-                fail++;
                 failNames.push(`@${c.username}: ${r.reason}`);
             }
             if (i < candidates.length - 1) {
@@ -231,51 +275,33 @@ async function runBatch() {
             }
         }
 
-        const durMin = Math.round((Date.now() - startedAt) / 60_000);
-        lastBatchSummary = `warm=${warmOk} cold=${coldOk} fail=${fail} (${durMin}m)`;
+        lastBatchSummary = `tick: sent=${sentNames.length} fail=${failNames.length} | day=${dailySent}/${DAILY_TARGET}`;
 
-        await notifyAdmin(
-            `✅ Утренний batch завершён за ${durMin} мин.\n\n` +
-            `🟢 Warm (1 msg): ${warmOk}\n` +
-            `🟡 Cold (3-burst): ${coldOk}\n` +
-            `❌ Fail: ${fail}\n\n` +
-            (sentNames.length > 0 ? `Отправлено: ${sentNames.join(', ')}\n` : '') +
-            (failNames.length > 0 ? `Не доставлено: ${failNames.slice(0, 5).join(' | ')}` : ''),
-            { rateLimitKey: 'daily-batch-done' },
-        );
+        if (sentNames.length > 0) {
+            await notifyAdmin(
+                `📤 Outreach tick: +${sentNames.length} (${sentNames.join(', ')}). Сегодня ${dailySent}/${DAILY_TARGET}.`,
+                { rateLimitKey: 'ws-tick-' + dailyKeyUTC + '-' + Math.floor(dailySent / 5) },
+            );
+        }
     } catch (e: any) {
-        console.error('[daily-batch] err:', e);
+        console.error('[ws] tick err:', e);
         lastBatchSummary = `error: ${e.message}`;
-        await notifyAdmin(`⚠️ Утренний batch упал: ${e.message}`, { rateLimitKey: 'daily-batch-err' });
     } finally {
         isRunning = false;
-    }
-}
-
-function shouldFire(): boolean {
-    const now = new Date();
-    const key = todayKeyUTC();
-    if (lastFiredKey === key) return false;
-    return now.getUTCHours() === TARGET_HOUR_UTC;
-}
-
-async function tick() {
-    if (shouldFire()) {
-        lastFiredKey = todayKeyUTC();
-        await runBatch();
     }
 }
 
 export function startDailyBatchSweep() {
     if (timer) return;
     if (!isWMEnabled()) {
-        console.log('[daily-batch] WM not configured — disabled');
+        console.log('[ws] WM not configured — disabled');
         return;
     }
+    dailyKeyUTC = todayKeyUTC();
     timer = setInterval(() => {
-        tick().catch(e => console.error('[daily-batch] tick err:', e));
-    }, TICK_CHECK_MS);
-    console.log(`[daily-batch] started — fires daily at ${TARGET_HOUR_UTC}:00 UTC (= ${TARGET_HOUR_UTC + 3}:00 MSK), target ${DAILY_TARGET}/day`);
+        runOneTick().catch(e => console.error('[ws] tick err:', e));
+    }, TICK_MS);
+    console.log(`[ws] started — every ${TICK_MS / 60000}m, window ${WINDOW_START_UTC + 3}-${WINDOW_END_UTC + 3} MSK, target ${DAILY_TARGET}/day, ${PER_TICK_TARGET}/tick`);
 }
 
 export function stopDailyBatchSweep() {
@@ -283,6 +309,6 @@ export function stopDailyBatchSweep() {
 }
 
 export async function tickDailyBatchNow(): Promise<DailyBatchStatus> {
-    await runBatch();
+    await runOneTick(true);  // force = bypass window/cap (manual trigger)
     return getDailyBatchStatus();
 }
