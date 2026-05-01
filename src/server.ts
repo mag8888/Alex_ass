@@ -36,6 +36,12 @@ import {
     tickNewUsersScannerNow,
     getNewUsersScannerStatus,
 } from './newUsersScanner';
+import {
+    startMeetupFollowupCron,
+    tickMeetupFollowupNow,
+    getMeetupFollowupStatus,
+} from './meetupFollowup';
+import { renderDashboardHTML } from './dashboard';
 
 const fastify = Fastify({ logger: true });
 
@@ -573,6 +579,19 @@ fastify.get('/qa/cancel/:id', async (req, reply) => {
 });
 
 fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
+
+// ── Active dashboard ────────────────────────────────────────────────────────
+fastify.get('/admin/dashboard', async (req, reply) => {
+    const html = await renderDashboardHTML();
+    reply.type('text/html');
+    return html;
+});
+
+// ── Meetup follow-up: status + tick ────────────────────────────────────────
+fastify.get('/admin/meetup-followup/status', async () => getMeetupFollowupStatus());
+fastify.post('/admin/meetup-followup/tick-now', async (req, reply) => {
+    try { return await tickMeetupFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
 
 // ── New users scanner: status + manual trigger ──────────────────────────────
 fastify.get('/admin/new-users-scanner/status', async () => getNewUsersScannerStatus());
@@ -2260,6 +2279,7 @@ const start = async () => {
             try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
             try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
             try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
+            try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {
