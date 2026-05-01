@@ -197,6 +197,25 @@ export async function startListener(_page?: any) {
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
 
+        // ── Pending visit card (Stage 3 после consent) ────────────────────────
+        // dailyBatchSweep сохраняет в facts.pendingCard готовую карточку — если
+        // юзер согласился её увидеть, отдаём её прямо сейчас и убираем из facts,
+        // чтобы listener не вываливал карточку повторно.
+        try {
+            const facts = (user.facts as any) || {};
+            if (facts.pendingCard) {
+                const consent = /\b(да|давайте|давай|интересно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|сюда)\b/iu.test(text)
+                    || /^\s*(?:да|ок|окей|давайте|интересно|покажи)[!.\s]*$/iu.test(text);
+                if (consent) {
+                    await sendMessageToUser(user.id, facts.pendingCard);
+                    delete facts.pendingCard;
+                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+                    console.log(`[listener] Sent pending card to @${username}`);
+                    // GPT всё равно сгенерит реплай ниже — он увидит контекст и сделает hand-off
+                }
+            }
+        } catch (e: any) { console.warn('[pending-card] err:', e.message); }
+
         // ── Partnership-intent detector (Принцип #16) ────────────────────────
         // Hot signal — escalate to Roman directly, GPT-prompt уже знает что делать
         const partnership = detectPartnershipIntent(text);
