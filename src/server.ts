@@ -31,6 +31,11 @@ import {
     isPending,
     getPendingStatus,
 } from './pendingSends';
+import {
+    startNewUsersScanner,
+    tickNewUsersScannerNow,
+    getNewUsersScannerStatus,
+} from './newUsersScanner';
 
 const fastify = Fastify({ logger: true });
 
@@ -568,6 +573,17 @@ fastify.get('/qa/cancel/:id', async (req, reply) => {
 });
 
 fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
+
+// ── New users scanner: status + manual trigger ──────────────────────────────
+fastify.get('/admin/new-users-scanner/status', async () => getNewUsersScannerStatus());
+fastify.post('/admin/new-users-scanner/tick-now', async (req, reply) => {
+    try {
+        const r = await tickNewUsersScannerNow();
+        return r;
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
 
 // ── WM recent-registrations (debug / admin sweep) ──────────────────────────
 fastify.get('/admin/wm-recent', async (req, reply) => {
@@ -2243,6 +2259,7 @@ const start = async () => {
             try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
             try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
             try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
+            try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {
