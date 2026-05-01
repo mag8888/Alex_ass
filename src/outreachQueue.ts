@@ -15,8 +15,8 @@ import { notifyAdmin } from './notify';
 const TICK_MS = 20 * 60 * 1000;          // 20 минут
 const DAILY_CAP = 36;                     // макс DM/сутки
 const COOLDOWN_DAYS = 7;                  // не трогать контактированных < 7д
-const WORK_HOUR_START = 10;               // 10:00 МСК
-const WORK_HOUR_END = 22;                 // до 22:00 МСК (exclusive)
+const WORK_HOUR_START = 9;                // 09:00 МСК (синхронно с workingHoursOutreach)
+const WORK_HOUR_END = 21;                 // до 21:00 МСК (exclusive)
 const MOSCOW_OFFSET_H = 3;                // UTC+3, без DST
 
 // ── State (in-memory, reset on restart) ─────────────────────────────────────
