@@ -41,6 +41,11 @@ import {
     tickMeetupFollowupNow,
     getMeetupFollowupStatus,
 } from './meetupFollowup';
+import {
+    startDailyBatchSweep,
+    tickDailyBatchNow,
+    getDailyBatchStatus,
+} from './dailyBatchSweep';
 import { renderDashboardHTML } from './dashboard';
 
 const fastify = Fastify({ logger: true });
@@ -585,6 +590,12 @@ fastify.get('/admin/dashboard', async (req, reply) => {
     const html = await renderDashboardHTML();
     reply.type('text/html');
     return html;
+});
+
+// ── Daily morning batch — status + manual fire ──────────────────────────────
+fastify.get('/admin/daily-batch/status', async () => getDailyBatchStatus());
+fastify.post('/admin/daily-batch/tick-now', async (req, reply) => {
+    try { return await tickDailyBatchNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
 // ── Meetup follow-up: status + tick ────────────────────────────────────────
@@ -2280,6 +2291,7 @@ const start = async () => {
             try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
             try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
             try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
+            try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {

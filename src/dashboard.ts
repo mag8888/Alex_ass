@@ -7,6 +7,7 @@ import { getOutreachQueueStatus } from './outreachQueue';
 import { getNewUsersScannerStatus } from './newUsersScanner';
 import { getPendingStatus } from './pendingSends';
 import { getMeetupFollowupStatus } from './meetupFollowup';
+import { getDailyBatchStatus } from './dailyBatchSweep';
 
 type Stage = 'LIVE' | 'SCALING' | 'BUILDING' | 'WAITING' | 'IDEA';
 
@@ -45,9 +46,17 @@ async function buildComponents(): Promise<Component[]> {
     const nus = getNewUsersScannerStatus();
     const pend = getPendingStatus();
     const meetup = getMeetupFollowupStatus();
+    const daily = getDailyBatchStatus();
 
     return [
         // ─── ВВОД (новые юзеры) ──────────────────────────────────────────────
+        {
+            name: '☀️ Daily Morning Batch (10:00 МСК)',
+            description: 'Каждый день в 10:00 МСК сервер сам берёт ~25 свежих WM-юзеров и шлёт персонализированный welcome (warm/cold по профилю). Полная автономия, не зависит от компа.',
+            stage: 'LIVE',
+            metric: `всего отправлено: ${daily.totalSent} | last: ${daily.lastFiredKey || '—'} | summary: ${daily.lastBatchSummary || '—'}`,
+            nextStep: 'После завтрашнего первого автозапуска — посмотреть delivery rate и tunнуть пейсинг',
+        },
         {
             name: 'newUsersScanner',
             description: 'Каждые 30 мин подбирает новых WM-юзеров, шлёт персонализированный welcome, ставит autoReply=true',
