@@ -16,6 +16,7 @@ import { notifyAdmin, notifyLeads, getAdminUsername, buildUserCard } from './not
 import { isVoiceMessage, transcribeVoice } from './voice';
 import { pickReaction } from './reactionPicker';
 import { enqueuePending, notifyAdminAboutPending } from './pendingSends';
+import { detectPartnershipIntent } from './partnershipDetector';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
@@ -195,6 +196,22 @@ export async function startListener(_page?: any) {
         const persistedText = isVoice ? `🎙️ ${text}` : text;
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
+
+        // ── Partnership-intent detector (Принцип #16) ────────────────────────
+        // Hot signal — escalate to Roman directly, GPT-prompt уже знает что делать
+        const partnership = detectPartnershipIntent(text);
+        if (partnership.matched) {
+            console.log(`[partnership] HOT LEAD @${username}: "${partnership.keyword}"`);
+            await notifyAdmin(
+                `🔥 HOT LEAD (партнёрство): @${username} (${user.firstName || ''})\n` +
+                `Триггер: «${partnership.keyword}»\n` +
+                `Сообщение: «${text.slice(0, 200)}»\n\n` +
+                `Бот предложит Zoom-слот. Подключайся напрямую через @roman_arctur, если готов созвониться.`,
+                { rateLimitKey: `hot-${user.id}` },
+            );
+            // GPT-промпт сам сгенерит правильный Zoom-pitch на следующем шаге
+            // через Принцип #16. Дополнительная логика не требуется.
+        }
 
         // ── Stats: if this user has a recent OutreachAttempt with no firstReplyAt,
         //    mark it now. Window = last 14 days to avoid attributing a much later
