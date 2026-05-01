@@ -133,7 +133,7 @@ async function sendWelcome(wm: WMUser) {
     const fallbackText =
         `${firstName}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш персональный менеджер по нетворкингу.\n` +
         `---SPLIT---\n` +
-        `Помогу с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы.\n` +
+        `Могу помочь с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы.\n` +
         `---SPLIT---\n` +
         `Расскажите коротко — что сейчас актуально: клиенты, партнёры или спецы под задачу? Можно голосом 🎙️`;
 
@@ -146,7 +146,7 @@ async function sendWelcome(wm: WMUser) {
         'STRUCTURE: 3 short bursts separated by `---SPLIT---` on its own line. The runtime sends each burst as a separate Telegram message with a 1-3s delay (WhatsApp-style).',
         '',
         'BURST 1 (greeting + identity): "{firstName}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш персональный менеджер по нетворкингу."',
-        'BURST 2 (two value props): "Помогу с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы." (you may rephrase but keep both props)',
+        'BURST 2 (two value props): "Могу помочь с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы." (you may rephrase but keep both props; ALWAYS soft "Могу помочь" — never imperative "Помогу")',
         'BURST 3 (open question + soft voice): "Расскажите коротко — что сейчас актуально: клиенты, партнёры или спецы под задачу? Можно голосом 🎙️"',
         '',
         'RULES:',
