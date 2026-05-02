@@ -69,7 +69,8 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         const followers = profile.igFollowers
             ? ` (${profile.igFollowers >= 1000 ? `${Math.round(profile.igFollowers / 100) / 10}K` : profile.igFollowers} подписчиков)`
             : '';
-        fullLines.push(`📸 Instagram: @${profile.igHandle}${followers}`);
+        // Полный URL — Telegram авто-делает кликабельным
+        fullLines.push(`📸 Instagram: https://instagram.com/${profile.igHandle}${followers}`);
     }
     if (primarySite?.description) {
         fullLines.push(`💡 Подход: ${primarySite.description.slice(0, 200)}`);
