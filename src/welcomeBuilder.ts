@@ -46,6 +46,7 @@ export interface WelcomeMessages {
     cardBrief: string | null;          // 1-предложение визитка (null если нет источников)
     cardFull: string | null;           // структурированная полная визитка + "что поменять?"
     cardGaps: string | null;           // предложение добавить недостающие поля для матчинга
+    cardQuestions: string | null;      // fallback questionnaire когда данных мало
     hasEnrichment: boolean;
 }
 
@@ -59,12 +60,7 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         `Помогаю участникам соединяться по запросам через ИИ-матчинг. Вам актуальны сейчас нетворкинг и, возможно, новые партнёрства?\n\n` +
         `Я могу помочь составить интересную визитку, Вам интересно?`;
 
-    if (!profile.hasPublicSources) {
-        return { stage1, cardBrief: null, cardFull: null, cardGaps: null, hasEnrichment: false };
-    }
-
-    // Не строим карточку если данных слишком мало — иначе brief = «Konstantin.»
-    // что выглядит хуже отсутствия карточки. Требуется минимум 2 факта помимо имени.
+    // Считаем факты для решения: card vs questionnaire
     let factCount = 0;
     if (profile.wmRole || profile.wmIndustry) factCount++;
     if (profile.wmLocation) factCount++;
@@ -72,8 +68,18 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
     if (profile.websites.length > 0) factCount++;
     if (profile.igHandle) factCount++;
     if (profile.wmHobbies.length > 0) factCount++;
-    if (factCount < 2) {
-        return { stage1, cardBrief: null, cardFull: null, cardGaps: null, hasEnrichment: false };
+
+    // Если данных мало — не строим карточку, шлём опросник.
+    // Roman: «если данных мало → "вы можете ответить на вопросы" + задаёшь
+    // вопросы из каталога: чем занимаетесь / хобби / кого ищете».
+    if (!profile.hasPublicSources || factCount < 2) {
+        const cardQuestions =
+            `Чтобы собрать Вашу визитку — расскажите коротко:\n\n` +
+            `• Чем занимаетесь?\n` +
+            `• Хобби, увлечения?\n` +
+            `• Кого сейчас ищете — клиенты, партнёры или спецы?\n\n` +
+            `Достаточно в свободной форме.`;
+        return { stage1, cardBrief: null, cardFull: null, cardGaps: null, cardQuestions, hasEnrichment: true };
     }
 
     // ── Brief визитка (1 предложение) ─────────────────────────────────
@@ -137,5 +143,5 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         gapItems.join('\n') +
         `\n\nЕсли хотите — расскажите коротко по одному из пунктов.`;
 
-    return { stage1, cardBrief, cardFull, cardGaps, hasEnrichment: true };
+    return { stage1, cardBrief, cardFull, cardGaps, cardQuestions: null, hasEnrichment: true };
 }

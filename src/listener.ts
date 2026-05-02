@@ -180,11 +180,17 @@ export async function startListener(_page?: any) {
                     const facts = (adminUser.facts as any) || {};
                     const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|пришли(?:те)?|шли(?:те)?|ок|окей|жду|пример|пробуй|готов(?:а|ы)?|можно)(?:$|\P{L})/iu;
                     if (consentRe.test(text) && facts.pendingCardOwed) {
-                        // Re-build на лету из свежих WM данных
                         const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
                         if (!enriched.firstName && adminUser.firstName) enriched.firstName = adminUser.firstName;
                         const msgs = buildWelcomeMessages(enriched);
-                        if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
+                        if (msgs.cardQuestions) {
+                            await sendMessageToUser(adminUser.id, msgs.cardQuestions);
+                            delete facts.pendingCardOwed;
+                            delete facts.pendingCardForUsername;
+                            delete facts.pendingCardForTgId;
+                            await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
+                            console.log(`[Listener admin-test] Sent cardQuestions to @${username}`);
+                        } else if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
                             const parts = [msgs.cardBrief, msgs.cardFull];
                             if (msgs.cardGaps) parts.push(msgs.cardGaps);
                             await sendMultipart(adminUser.id, parts);
@@ -194,7 +200,7 @@ export async function startListener(_page?: any) {
                             facts.cardsDeliveredAt = new Date().toISOString();
                             facts.cardsFollowupSent = false;
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered fresh-built cards to @${username}`);
+                            console.log(`[Listener admin-test] Delivered fresh-built cards to @${username}`);
                         }
                     }
                 }
@@ -259,11 +265,20 @@ export async function startListener(_page?: any) {
                 pendingCardSilenceMode = true;  // GPT не должен генерить карточки сам
             }
             if (consentRe.test(text) && facts.pendingCardOwed) {
-                // Re-build на лету из свежих WM данных
                 const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
                 if (!enriched.firstName && user.firstName) enriched.firstName = user.firstName;
                 const msgs = buildWelcomeMessages(enriched);
-                if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
+                if (msgs.cardQuestions) {
+                    // Мало данных → шлём опросник вместо карточки
+                    await sendMessageToUser(user.id, msgs.cardQuestions);
+                    delete facts.pendingCardOwed;
+                    delete facts.pendingCardForUsername;
+                    delete facts.pendingCardForTgId;
+                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+                    console.log(`[listener] Sent cardQuestions (low-data) to @${username}`);
+                    cardsJustDelivered = true;
+                    pendingCardSilenceMode = false;
+                } else if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
                     const parts = [msgs.cardBrief, msgs.cardFull];
                     if (msgs.cardGaps) parts.push(msgs.cardGaps);
                     await sendMultipart(user.id, parts);
