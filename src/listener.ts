@@ -18,6 +18,7 @@ import { isVoiceMessage, transcribeVoice } from './voice';
 import { pickReaction } from './reactionPicker';
 import { enqueuePending, notifyAdminAboutPending } from './pendingSends';
 import { detectPartnershipIntent } from './partnershipDetector';
+import { detectEscalationIntent } from './escalationDetector';
 import { enrichProfile } from './profileEnricher';
 import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
@@ -279,11 +280,45 @@ export async function startListener(_page?: any) {
             }
         } catch (e: any) { console.warn('[welcome-cards] err:', e.message); }
 
-        // Если pendingCardOwed=true и consent не словлен — listener молчит,
-        // НЕ даём GPT генерить (иначе галлюцинирует фейковую карточку как у @Goloka).
-        // На следующее сообщение юзера снова проверим consent — мб он напишет «да».
+        // Если pendingCardOwed=true и consent не словлен — escalate to Roman.
+        // Roman: "если не знаешь что ответить меня тегай". Юзер дал counter-question
+        // или ambiguous ответ → бот шлёт «минутку, привлекаю основателя» + DM Roman'у.
         if (pendingCardSilenceMode && !cardsJustDelivered) {
-            console.log(`[Listener] @${username} pendingCardOwed but no consent — skipping GPT to prevent fake-card hallucination`);
+            console.log(`[Listener] @${username} pendingCardOwed but no consent → escalate to Roman`);
+            try {
+                await sendMessageToUser(user.id, 'Минутку, привлекаю основателя — @roman_arctur подключится с конкретикой.');
+                // Выключаем autoReply чтобы бот не галлюцинировал больше
+                await prisma.user.update({ where: { id: user.id }, data: { autoReply: false } });
+                // DM Роману
+                await notifyAdmin(
+                    `🆘 ESCALATION (нужна твоя реакция): @${username} (${user.firstName || ''}, d=${dialogue.id})\n` +
+                    `Сообщение: «${text.slice(0, 250)}»\n\n` +
+                    `Бот сказал «привлекаю основателя» и выключил автоответ. Подключайся через @roman_arctur.`,
+                    { rateLimitKey: `escalation-${user.id}` },
+                );
+            } catch (e: any) {
+                console.warn('[escalation] err:', e.message);
+            }
+            return;
+        }
+
+        // Также явный escalation на ambiguous-counter-question (уточните, конкретика, etc)
+        const esc = detectEscalationIntent(text);
+        if (esc.matched) {
+            console.log(`[escalation] @${username} «${esc.keyword}» → tag Roman`);
+            try {
+                await sendMessageToUser(user.id, 'Минутку, привлекаю основателя — @roman_arctur подключится с конкретикой.');
+                await prisma.user.update({ where: { id: user.id }, data: { autoReply: false } });
+                await notifyAdmin(
+                    `🆘 ESCALATION: @${username} (${user.firstName || ''}, d=${dialogue.id})\n` +
+                    `Триггер: «${esc.keyword}»\n` +
+                    `Сообщение: «${text.slice(0, 250)}»\n\n` +
+                    `Бот сказал «привлекаю основателя». Включайся.`,
+                    { rateLimitKey: `escalation-${user.id}` },
+                );
+            } catch (e: any) {
+                console.warn('[escalation] err:', e.message);
+            }
             return;
         }
 
