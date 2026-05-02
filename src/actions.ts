@@ -289,21 +289,51 @@ export async function sendMessageToUser(userId: number, text: string) {
 }
 
 /**
- * Send multiple short messages with realistic typing delays — for cold outreach
- * and any case where one message would be a wall of text. Each part should be
- * ONE thought (greeting / context / offer / question). Delay 1.5-2.5s between
- * parts so it reads like a person typing in WhatsApp.
- *
- * Roman: cold first-touch must be 2-4 short messages, not one paragraph.
+ * Show typing indicator for `durationMs` and then resolve.
+ * Roman: бот должен показывать "печатает" 4-7 сек перед ответом — иначе
+ * чтение и мгновенный ответ выглядят роботно.
  */
-export async function sendMultipart(userId: number, parts: string[], opts?: { delayMs?: [number, number] }) {
+async function showTyping(userId: number, durationMs: number) {
+    try {
+        const client = getClient();
+        if (!client?.connected) return;
+        const u = await prisma.user.findUnique({ where: { id: userId } });
+        if (!u) return;
+        const username = u.telegramId || u.username;
+        if (!username) return;
+        // SetTyping действует ~6 секунд, поэтому шлём раз в 5 сек
+        const interval = 5000;
+        const ticks = Math.max(1, Math.ceil(durationMs / interval));
+        for (let i = 0; i < ticks; i++) {
+            await client.invoke(new Api.messages.SetTyping({
+                peer: username as any,
+                action: new Api.SendMessageTypingAction(),
+            })).catch(() => { });
+            const wait = i === ticks - 1 ? (durationMs - i * interval) : interval;
+            if (wait > 0) await new Promise(r => setTimeout(r, wait));
+        }
+    } catch (_) { /* swallow */ }
+}
+
+/**
+ * Send multiple short messages with realistic typing delays + typing indicator.
+ * Default flow: typing(4-7s) → message → pause(1.5-2.5s) → typing(3-5s) → next message
+ * Roman: cold first-touch must be 2-4 short messages with "печатает..." UX.
+ */
+export async function sendMultipart(userId: number, parts: string[], opts?: { delayMs?: [number, number]; typingMsFirst?: [number, number]; typingMsRest?: [number, number] }) {
     const [minMs, maxMs] = opts?.delayMs ?? [1500, 2500];
+    const [tFirstMin, tFirstMax] = opts?.typingMsFirst ?? [4000, 7000];
+    const [tRestMin, tRestMax] = opts?.typingMsRest ?? [3000, 5000];
     const filtered = parts.map(p => p.trim()).filter(Boolean);
     for (let i = 0; i < filtered.length; i++) {
         if (i > 0) {
             const wait = minMs + Math.floor(Math.random() * (maxMs - minMs));
             await new Promise(r => setTimeout(r, wait));
         }
+        const tMin = i === 0 ? tFirstMin : tRestMin;
+        const tMax = i === 0 ? tFirstMax : tRestMax;
+        const typingDur = tMin + Math.floor(Math.random() * (tMax - tMin));
+        await showTyping(userId, typingDur);
         await sendMessageToUser(userId, filtered[i]);
     }
     return { sent: filtered.length };

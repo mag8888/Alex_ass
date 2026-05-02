@@ -6,6 +6,7 @@ import {
     saveMessageToDb,
     createDraftMessage,
     sendMessageToUser,
+    sendMultipart,
     upgradeStatusOnSend,
 } from "./actions";
 import { generateResponse } from "./gpt";
@@ -157,7 +158,9 @@ export async function startListener(_page?: any) {
         // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
         // НО: voice от админа сохраняем + если есть pendingCardBrief/Full — обрабатываем consent.
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
-            try { await message.markAsRead(); } catch (_) { }
+            // Delayed read для admin тоже — иначе Роман видит мгновенный read при self-test
+            const adminReadDelay = 4000 + Math.floor(Math.random() * 3000);
+            setTimeout(() => message.markAsRead().catch(() => { }), adminReadDelay);
             try {
                 const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
                 if (adminUser) {
@@ -175,14 +178,9 @@ export async function startListener(_page?: any) {
                     const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
                     if (consentRe.test(text)) {
                         if (facts.pendingCardBrief && facts.pendingCardFull) {
-                            const cl = getClient();
-                            await cl?.sendMessage(username, { message: facts.pendingCardBrief });
-                            await new Promise(r => setTimeout(r, 1500));
-                            await cl?.sendMessage(username, { message: facts.pendingCardFull });
-                            if (facts.pendingCardGaps) {
-                                await new Promise(r => setTimeout(r, 1500));
-                                await cl?.sendMessage(username, { message: facts.pendingCardGaps });
-                            }
+                            const parts = [facts.pendingCardBrief, facts.pendingCardFull];
+                            if (facts.pendingCardGaps) parts.push(facts.pendingCardGaps);
+                            await sendMultipart(adminUser.id, parts);
                             delete facts.pendingCardBrief;
                             delete facts.pendingCardFull;
                             delete facts.pendingCardGaps;
@@ -216,8 +214,13 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        // ── Mark as read (reaction now fires AFTER successful reply, not here) ─
-        try { await message.markAsRead(); } catch (_) { }
+        // ── Delayed mark-as-read (Roman: instant read = surveilled feeling)
+        // Откладываем «прочитано» на 4-7 сек — синхронно с typing-индикатором
+        // на исходящем ответе. Юзер видит read tick → typing → ответ.
+        const readDelayMs = 4000 + Math.floor(Math.random() * 3000);
+        setTimeout(() => {
+            message.markAsRead().catch(() => { });
+        }, readDelayMs);
 
         // ── Save inbound message + ensure user/dialogue ─────────────────────
         const { user, dialogue } = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
@@ -240,13 +243,9 @@ export async function startListener(_page?: any) {
             const facts = (user.facts as any) || {};
             const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
             if (consentRe.test(text) && facts.pendingCardBrief && facts.pendingCardFull) {
-                await sendMessageToUser(user.id, facts.pendingCardBrief);
-                await new Promise(r => setTimeout(r, 1500));
-                await sendMessageToUser(user.id, facts.pendingCardFull);
-                if (facts.pendingCardGaps) {
-                    await new Promise(r => setTimeout(r, 1500));
-                    await sendMessageToUser(user.id, facts.pendingCardGaps);
-                }
+                const parts = [facts.pendingCardBrief, facts.pendingCardFull];
+                if (facts.pendingCardGaps) parts.push(facts.pendingCardGaps);
+                await sendMultipart(user.id, parts);
                 delete facts.pendingCardBrief;
                 delete facts.pendingCardFull;
                 delete facts.pendingCardGaps;
