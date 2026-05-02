@@ -53,14 +53,15 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
     if (profile.wmLocation) briefParts.push(profile.wmLocation);
 
     const brief = briefParts.join('. ') + '.';
-    const cardBrief = `Краткая визитка:\n\n«${brief}»`;
+    const cardBrief = `Подготовил для Вас краткую визитку:\n\n«${brief}»`;
 
     // ── Полная визитка (структурированная) ────────────────────────────
     const fullLines: string[] = [];
     fullLines.push(`👤 ${fullName}${profile.username ? ` (@${profile.username})` : ''}`);
     if (activity.length > 0) fullLines.push(`🎯 Род деятельности: ${activity.join(' / ')}`);
+    if (profile.wmCompany) fullLines.push(`🏢 Компания: ${profile.wmCompany}`);
     if (primarySite) {
-        if (primarySite.title) fullLines.push(`🏢 Бренд: ${primarySite.title.slice(0, 100)}`);
+        if (primarySite.title && !profile.wmCompany) fullLines.push(`🏢 Бренд: ${primarySite.title.slice(0, 100)}`);
         fullLines.push(`🌐 Сайт: ${primarySite.url}`);
     }
     if (profile.wmLocation) fullLines.push(`📍 Локация: ${profile.wmLocation}`);
@@ -73,8 +74,14 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
     if (primarySite?.description) {
         fullLines.push(`💡 Подход: ${primarySite.description.slice(0, 200)}`);
     }
+    if (profile.wmHobbies.length > 0) {
+        fullLines.push(`🎮 Хобби: ${profile.wmHobbies.slice(0, 8).join(', ')}`);
+    }
+    if (profile.wmInterests.length > 0) {
+        fullLines.push(`🎯 Интересы: ${profile.wmInterests.slice(0, 8).join(', ')}`);
+    }
 
-    const cardFull = `Полная визитка:\n\n${fullLines.join('\n')}\n\nЧто бы Вы поменяли или добавили?`;
+    const cardFull = `А вот полная визитка:\n\n${fullLines.join('\n')}\n\nЧто бы Вы поменяли или добавили?`;
 
     // ── Gap analysis: что бы помогло матчингу но отсутствует ──────────
     // WM-схема для матчинга использует: hobbies / interests / bestClients /

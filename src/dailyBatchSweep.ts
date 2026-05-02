@@ -224,10 +224,13 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
         const msgs = buildWelcomeMessages(enriched);
 
         const facts = (user.facts as any) || {};
-        if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
-            facts.pendingCardBrief = msgs.cardBrief;
-            facts.pendingCardFull = msgs.cardFull;
-            if (msgs.cardGaps) facts.pendingCardGaps = msgs.cardGaps;
+        if (msgs.hasEnrichment) {
+            // Храним FLAG что есть pending карточка + telegramId для пересборки.
+            // Текст не кэшируем — листенер re-build на лету из свежих WM данных
+            // (важно если user добавил хобби/интересы между Stage 1 и consent).
+            facts.pendingCardOwed = true;
+            facts.pendingCardForUsername = wm.username;
+            facts.pendingCardForTgId = wm.telegramId;
             warm = true;
             await prisma.user.update({
                 where: { id: user.id },

@@ -13,15 +13,19 @@ export interface EnrichedProfile {
     wmIndustry: string | null;
     wmLocation: string | null;
     wmCompletion: number | null;
+    wmHobbies: string[];                // из WM profile
+    wmInterests: string[];              // темы/интересы (если есть в WM)
+    wmCompany: string | null;
+    wmTags: string[];                   // CRM/profile tags
 
-    tgBioText: string | null;          // og:description с t.me/<user>
-    tgLinks: string[];                  // URL'ы из TG bio
-    igHandle: string | null;            // @handle если IG в bio
+    tgBioText: string | null;
+    tgLinks: string[];
+    igHandle: string | null;
     igFollowers: number | null;
     igFullName: string | null;
     websites: { url: string; title: string | null; description: string | null }[];
 
-    hasPublicSources: boolean;          // shortcut: можно ли строить карточку
+    hasPublicSources: boolean;
 }
 
 const TIMEOUT_MS = 6000;
@@ -95,6 +99,10 @@ export async function enrichProfile(username: string, telegramId?: string): Prom
         wmIndustry: null,
         wmLocation: null,
         wmCompletion: null,
+        wmHobbies: [],
+        wmInterests: [],
+        wmCompany: null,
+        wmTags: [],
         tgBioText: null,
         tgLinks: [],
         igHandle: null,
@@ -120,6 +128,10 @@ export async function enrichProfile(username: string, telegramId?: string): Prom
             result.wmId = wm.id;
             result.wmRole = wm.profile?.role || null;
             result.wmIndustry = wm.profile?.industry || null;
+            result.wmCompany = wm.profile?.company || null;
+            if (Array.isArray(wm.profile?.hobbies)) result.wmHobbies = wm.profile.hobbies;
+            if (Array.isArray(wm.profile?.interests)) result.wmInterests = wm.profile.interests;
+            if (Array.isArray(wm.profile?.tags)) result.wmTags = wm.profile.tags;
             result.wmLocation = wm.profile?.location || null;
             result.wmCompletion = wm.profile?.completion ?? null;
         }
