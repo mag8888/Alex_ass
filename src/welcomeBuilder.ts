@@ -8,21 +8,37 @@
 
 import { EnrichedProfile } from './profileEnricher';
 
-function cleanFirstName(raw: string | null | undefined): string {
-    if (!raw) return 'друг';
-    // Срезаем после '|' / ',' / '/' — это часто decorative tail
+// Возвращает чистое имя или null. NEVER "друг" — fallback в opener
+// делается через time-based приветствие.
+function cleanFirstName(raw: string | null | undefined): string | null {
+    if (!raw) return null;
     let s = raw.split(/[|,/]/u)[0].trim();
-    // Срезаем эмодзи/symbols в начале и конце
     s = s.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
-    if (!s) return 'друг';
-    // Берём первое слово — отбрасываем фамилию/титул («Наталья Мос» → «Наталья»,
-    // «Психолог Гипнотерапевт» → «Психолог» (плохо!), но fallback ниже спасёт)
+    if (!s) return null;
     const firstWord = s.split(/\s+/u)[0];
-    // Если первое слово выглядит как профессия/должность — fallback
-    const titleWords = /^(психолог|тренер|коуч|эксперт|founder|ceo|основатель|предприниматель|инвестор|консультант)$/iu;
-    if (titleWords.test(firstWord)) return 'друг';
-    if (firstWord.length < 2 || firstWord.length > 25) return 'друг';
+    const titleWords = /^(психолог|тренер|коуч|эксперт|founder|ceo|основатель|предприниматель|инвестор|консультант|expert)$/iu;
+    if (titleWords.test(firstWord)) return null;
+    if (firstWord.length < 2 || firstWord.length > 25) return null;
     return firstWord;
+}
+
+// Time-based greeting в Moscow time. Roman: "либо имя либо приветствие
+// доброе утро/день/вечер в зависимости от времени".
+function timeGreeting(): string {
+    const utcH = new Date().getUTCHours();
+    const mskH = (utcH + 3) % 24;
+    if (mskH >= 5 && mskH < 12) return 'Доброе утро';
+    if (mskH >= 12 && mskH < 17) return 'Добрый день';
+    if (mskH >= 17 && mskH < 23) return 'Добрый вечер';
+    return 'Доброй ночи';
+}
+
+// Opener: "{Имя}, добрый день!" если имя есть, иначе "Добрый день!".
+// Никогда "друг" / "уважаемый" / другие шаблоны.
+function buildOpener(name: string | null): string {
+    const greet = timeGreeting();
+    if (name) return `${name}, ${greet.toLowerCase()}!`;
+    return `${greet}!`;
 }
 
 export interface WelcomeMessages {
@@ -35,9 +51,10 @@ export interface WelcomeMessages {
 
 export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages {
     const fn = cleanFirstName(profile.firstName);
+    const opener = buildOpener(fn);
 
     const stage1 =
-        `${fn}, добрый день!\n\n` +
+        `${opener}\n\n` +
         `Вы регистрировались у нас в Wave Match — я Ваш ассистент по нетворкингу.\n\n` +
         `Помогаю участникам соединяться по запросам через ИИ-матчинг. Вам актуальны сейчас нетворкинг и, возможно, новые партнёрства?\n\n` +
         `Я могу помочь составить интересную визитку, Вам интересно?`;
@@ -48,7 +65,7 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
 
     // ── Brief визитка (1 предложение) ─────────────────────────────────
     const briefParts: string[] = [];
-    const fullName = profile.igFullName || fn;
+    const fullName = profile.igFullName || fn || profile.username || 'Участник Wave Match';
     briefParts.push(fullName);
 
     const activity: string[] = [];
