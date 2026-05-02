@@ -101,39 +101,12 @@ interface FullWMUser {
     profile?: { role?: string; industry?: string; location?: string; completion?: number } | null;
 }
 
-function cleanFirstName(raw: string | null): string {
-    if (!raw) return 'друг';
-    // Убираем эмодзи в начале / в конце, обрезаем по '|', берём первое слово
-    let s = raw.split('|')[0].trim();
-    s = s.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
-    if (!s || s.length > 30) return 'друг';
-    return s;
-}
-
-function buildWelcome(wm: FullWMUser): { text: string; isMultipart: boolean; firstName: string } {
-    const fn = cleanFirstName(wm.firstName);
-    const facts: string[] = [];
-    if (wm.profile?.role?.trim()) facts.push(wm.profile.role.trim());
-    const industry = wm.profile?.industry?.trim();
-    if (industry && industry !== wm.profile?.role) facts.push(industry);
-    if (wm.profile?.location?.trim()) facts.push(wm.profile.location.trim());
-
-    if (facts.length > 0) {
-        const f2 = facts.slice(0, 2).join(', ');
-        return {
-            firstName: fn,
-            isMultipart: false,
-            text: `${fn}, добрый день! Это Wave Match — помню Вас по регистрации, ${f2}. Какие сейчас актуальные задачи: ищете клиентов, партнёров или спецов под проект?`,
-        };
-    }
+// (removed dead buildWelcome / cleanFirstName — superseded by welcomeBuilder.ts)
+function _deadStub_(wm: FullWMUser): { text: string; isMultipart: boolean; firstName: string } {
     return {
-        firstName: fn,
-        isMultipart: true,
-        text: [
-            `${fn}, добрый день! Вы регистрировались у нас в Wave Match — я Ваш ассистент по нетворкингу.`,
-            `Могу помочь с двумя вещами: оформить Вашу визитку для подбора партнёров и познакомить с нужными людьми из базы.`,
-            `Расскажите коротко — что сейчас актуально: клиенты, партнёры или спецы под задачу? Можно голосом 🎙️`,
-        ].join('\n---SPLIT---\n'),
+        firstName: 'друг',
+        isMultipart: false,
+        text: '',
     };
 }
 

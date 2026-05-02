@@ -10,10 +10,19 @@ import { EnrichedProfile } from './profileEnricher';
 
 function cleanFirstName(raw: string | null | undefined): string {
     if (!raw) return 'друг';
-    let s = raw.split('|')[0].trim();
+    // Срезаем после '|' / ',' / '/' — это часто decorative tail
+    let s = raw.split(/[|,/]/u)[0].trim();
+    // Срезаем эмодзи/symbols в начале и конце
     s = s.replace(/^[^\p{L}]+|[^\p{L}]+$/gu, '');
-    if (!s || s.length > 30) return 'друг';
-    return s;
+    if (!s) return 'друг';
+    // Берём первое слово — отбрасываем фамилию/титул («Наталья Мос» → «Наталья»,
+    // «Психолог Гипнотерапевт» → «Психолог» (плохо!), но fallback ниже спасёт)
+    const firstWord = s.split(/\s+/u)[0];
+    // Если первое слово выглядит как профессия/должность — fallback
+    const titleWords = /^(психолог|тренер|коуч|эксперт|founder|ceo|основатель|предприниматель|инвестор|консультант)$/iu;
+    if (titleWords.test(firstWord)) return 'друг';
+    if (firstWord.length < 2 || firstWord.length > 25) return 'друг';
+    return firstWord;
 }
 
 export interface WelcomeMessages {
