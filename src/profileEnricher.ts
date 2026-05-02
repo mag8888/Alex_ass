@@ -86,7 +86,7 @@ async function fetchWebsite(url: string): Promise<{ title: string | null; descri
 
 const IG_RE = /(?:instagram\.com|instagr\.am)\/([A-Za-z0-9._]+)/i;
 
-export async function enrichProfile(username: string): Promise<EnrichedProfile> {
+export async function enrichProfile(username: string, telegramId?: string): Promise<EnrichedProfile> {
     const result: EnrichedProfile = {
         username,
         firstName: null,
@@ -104,9 +104,17 @@ export async function enrichProfile(username: string): Promise<EnrichedProfile> 
         hasPublicSources: false,
     };
 
-    // 1. WM profile
+    // 1. WM profile — try telegramId first (правильный ключ для WM API),
+    // потом username как fallback. WM-эндпоинт /api/wm/users/tg:<id> ожидает
+    // numeric ID; передавать username туда — баг.
     try {
-        const wm: any = await getUserByTelegramId(username, 'profile');
+        let wm: any = null;
+        if (telegramId) {
+            wm = await getUserByTelegramId(telegramId, 'profile');
+        }
+        if (!wm) {
+            wm = await getUserByTelegramId(username, 'profile');
+        }
         if (wm) {
             result.firstName = wm.firstName || null;
             result.wmId = wm.id;

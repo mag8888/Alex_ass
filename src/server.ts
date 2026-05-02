@@ -45,6 +45,8 @@ import {
     startDailyBatchSweep,
     tickDailyBatchNow,
     getDailyBatchStatus,
+    pauseDailyBatchSweep,
+    resumeDailyBatchSweep,
 } from './dailyBatchSweep';
 import { renderDashboardHTML } from './dashboard';
 
@@ -597,6 +599,8 @@ fastify.get('/admin/daily-batch/status', async () => getDailyBatchStatus());
 fastify.post('/admin/daily-batch/tick-now', async (req, reply) => {
     try { return await tickDailyBatchNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
+fastify.post('/admin/daily-batch/pause', async () => { pauseDailyBatchSweep(); return { ok: true, ...getDailyBatchStatus() }; });
+fastify.post('/admin/daily-batch/resume', async () => { resumeDailyBatchSweep(); return { ok: true, ...getDailyBatchStatus() }; });
 
 // ── Meetup follow-up: status + tick ────────────────────────────────────────
 fastify.get('/admin/meetup-followup/status', async () => getMeetupFollowupStatus());
