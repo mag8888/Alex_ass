@@ -18,6 +18,8 @@ import { isVoiceMessage, transcribeVoice } from './voice';
 import { pickReaction } from './reactionPicker';
 import { enqueuePending, notifyAdminAboutPending } from './pendingSends';
 import { detectPartnershipIntent } from './partnershipDetector';
+import { enrichProfile } from './profileEnricher';
+import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
@@ -176,16 +178,20 @@ export async function startListener(_page?: any) {
                     }
                     const facts = (adminUser.facts as any) || {};
                     const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
-                    if (consentRe.test(text)) {
-                        if (facts.pendingCardBrief && facts.pendingCardFull) {
-                            const parts = [facts.pendingCardBrief, facts.pendingCardFull];
-                            if (facts.pendingCardGaps) parts.push(facts.pendingCardGaps);
+                    if (consentRe.test(text) && facts.pendingCardOwed) {
+                        // Re-build на лету из свежих WM данных
+                        const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
+                        if (!enriched.firstName && adminUser.firstName) enriched.firstName = adminUser.firstName;
+                        const msgs = buildWelcomeMessages(enriched);
+                        if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
+                            const parts = [msgs.cardBrief, msgs.cardFull];
+                            if (msgs.cardGaps) parts.push(msgs.cardGaps);
                             await sendMultipart(adminUser.id, parts);
-                            delete facts.pendingCardBrief;
-                            delete facts.pendingCardFull;
-                            delete facts.pendingCardGaps;
+                            delete facts.pendingCardOwed;
+                            delete facts.pendingCardForUsername;
+                            delete facts.pendingCardForTgId;
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
-                            console.log(`[Listener] (admin-test) Delivered brief+full+gaps to @${username}`);
+                            console.log(`[Listener] (admin-test) Delivered fresh-built cards to @${username}`);
                         }
                     }
                 }
@@ -242,15 +248,21 @@ export async function startListener(_page?: any) {
         try {
             const facts = (user.facts as any) || {};
             const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
-            if (consentRe.test(text) && facts.pendingCardBrief && facts.pendingCardFull) {
-                const parts = [facts.pendingCardBrief, facts.pendingCardFull];
-                if (facts.pendingCardGaps) parts.push(facts.pendingCardGaps);
-                await sendMultipart(user.id, parts);
-                delete facts.pendingCardBrief;
-                delete facts.pendingCardFull;
-                delete facts.pendingCardGaps;
-                await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
-                console.log(`[listener] Sent brief+full+gaps to @${username}`);
+            if (consentRe.test(text) && facts.pendingCardOwed) {
+                // Re-build на лету из свежих WM данных
+                const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
+                if (!enriched.firstName && user.firstName) enriched.firstName = user.firstName;
+                const msgs = buildWelcomeMessages(enriched);
+                if (msgs.hasEnrichment && msgs.cardBrief && msgs.cardFull) {
+                    const parts = [msgs.cardBrief, msgs.cardFull];
+                    if (msgs.cardGaps) parts.push(msgs.cardGaps);
+                    await sendMultipart(user.id, parts);
+                    delete facts.pendingCardOwed;
+                    delete facts.pendingCardForUsername;
+                    delete facts.pendingCardForTgId;
+                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+                    console.log(`[listener] Sent fresh-built cards to @${username}`);
+                }
             }
         } catch (e: any) { console.warn('[welcome-cards] err:', e.message); }
 
