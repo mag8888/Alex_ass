@@ -29,6 +29,10 @@ let lastTickAt: Date | null = null;
 let lastBatchSummary: string | null = null;
 let totalSent = 0;                       // lifetime
 let isRunning = false;
+let paused = false;                      // ручной стоп для emergency
+
+export function pauseDailyBatchSweep() { paused = true; }
+export function resumeDailyBatchSweep() { paused = false; }
 
 export interface DailyBatchStatus {
     enabled: boolean;
@@ -210,14 +214,13 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
     });
 
     // ── 3-stage welcome (Принцип #17) ────────────────────────────────────
-    // Stage 1: intro + ask про networking + ask про визитку — единое
-    // Stage 2: "посмотрел страницы — прислать визитку?" — после consent
-    // Stage 3: карточка с просьбой "что поменять?" — после второго consent
-    // Stage 2 и Stage 3 хранятся в facts.pendingTeaser / facts.pendingCard
-    // и отправляются listener-ом при детекте интереса.
     let warm = false;
     try {
-        const enriched = await enrichProfile(wm.username);
+        // Передаём telegramId явно — WM API requires it
+        const enriched = await enrichProfile(wm.username!, wm.telegramId || undefined);
+        // Fallback: если WM по какой-то причине не отдал firstName, берём из
+        // preloaded data (которая уже была в pickCandidates)
+        if (!enriched.firstName && wm.firstName) enriched.firstName = wm.firstName;
         const msgs = buildWelcomeMessages(enriched);
 
         const facts = (user.facts as any) || {};
@@ -248,6 +251,10 @@ async function runOneTick(force: boolean = false) {
     ensureDailyCounter();
 
     if (!force) {
+        if (paused) {
+            lastBatchSummary = 'paused';
+            return;
+        }
         if (!inWorkingWindow()) {
             lastBatchSummary = `outside-window (msk=${moscowHour()}:00)`;
             return;
