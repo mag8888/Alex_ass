@@ -42,6 +42,11 @@ import {
     getMeetupFollowupStatus,
 } from './meetupFollowup';
 import {
+    startCardsFollowupCron,
+    tickCardsFollowupNow,
+    getCardsFollowupStatus,
+} from './cardsFollowup';
+import {
     startDailyBatchSweep,
     tickDailyBatchNow,
     getDailyBatchStatus,
@@ -601,6 +606,12 @@ fastify.post('/admin/daily-batch/tick-now', async (req, reply) => {
 });
 fastify.post('/admin/daily-batch/pause', async () => { pauseDailyBatchSweep(); return { ok: true, ...getDailyBatchStatus() }; });
 fastify.post('/admin/daily-batch/resume', async () => { resumeDailyBatchSweep(); return { ok: true, ...getDailyBatchStatus() }; });
+
+// ── Cards follow-up — status + tick ────────────────────────────────────────
+fastify.get('/admin/cards-followup/status', async () => getCardsFollowupStatus());
+fastify.post('/admin/cards-followup/tick-now', async (req, reply) => {
+    try { return await tickCardsFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
 
 // ── Meetup follow-up: status + tick ────────────────────────────────────────
 fastify.get('/admin/meetup-followup/status', async () => getMeetupFollowupStatus());
@@ -2313,6 +2324,7 @@ const start = async () => {
             try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
             try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
             try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
+            try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
             try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
