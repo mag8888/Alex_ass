@@ -190,6 +190,8 @@ export async function startListener(_page?: any) {
                             delete facts.pendingCardOwed;
                             delete facts.pendingCardForUsername;
                             delete facts.pendingCardForTgId;
+                            facts.cardsDeliveredAt = new Date().toISOString();
+                            facts.cardsFollowupSent = false;
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
                             console.log(`[Listener] (admin-test) Delivered fresh-built cards to @${username}`);
                         }
