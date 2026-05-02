@@ -63,6 +63,19 @@ export function buildWelcomeMessages(profile: EnrichedProfile): WelcomeMessages 
         return { stage1, cardBrief: null, cardFull: null, cardGaps: null, hasEnrichment: false };
     }
 
+    // Не строим карточку если данных слишком мало — иначе brief = «Konstantin.»
+    // что выглядит хуже отсутствия карточки. Требуется минимум 2 факта помимо имени.
+    let factCount = 0;
+    if (profile.wmRole || profile.wmIndustry) factCount++;
+    if (profile.wmLocation) factCount++;
+    if (profile.wmCompany) factCount++;
+    if (profile.websites.length > 0) factCount++;
+    if (profile.igHandle) factCount++;
+    if (profile.wmHobbies.length > 0) factCount++;
+    if (factCount < 2) {
+        return { stage1, cardBrief: null, cardFull: null, cardGaps: null, hasEnrichment: false };
+    }
+
     // ── Brief визитка (1 предложение) ─────────────────────────────────
     const briefParts: string[] = [];
     const fullName = profile.igFullName || fn || profile.username || 'Участник Wave Match';
