@@ -177,7 +177,7 @@ export async function startListener(_page?: any) {
                         }
                     }
                     const facts = (adminUser.facts as any) || {};
-                    const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
+                    const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|пришли(?:те)?|шли(?:те)?|ок|окей|жду|пример|пробуй|готов(?:а|ы)?|можно)(?:$|\P{L})/iu;
                     if (consentRe.test(text) && facts.pendingCardOwed) {
                         // Re-build на лету из свежих WM данных
                         const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
@@ -245,11 +245,18 @@ export async function startListener(_page?: any) {
 
         // ── Welcome flow Stage 2 — отправка brief + full визитки на consent ─
         // Юзер ответил "да/интересно/давай" на Stage 1 → шлём краткую И полную
-        // визитки сразу (без повторного "прислать?"). GPT сгенерит свой реплай
-        // ниже — он увидит контекст и сделает hand-off, не задавая ту же тему.
+        // визитки сразу (без повторного "прислать?"). КРИТИЧНО: если pendingCardOwed
+        // = true, мы НЕ должны давать GPT генерить ответ — иначе он галлюцинирует
+        // фейковую карточку (баг Goloka 2026-05-02). Если consent есть — доставляем
+        // pending. Если нет — листенер просто завершает обработку без GPT-реплая.
+        let cardsJustDelivered = false;
+        let pendingCardSilenceMode = false;
         try {
             const facts = (user.facts as any) || {};
-            const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|шли|ок|окей)(?:$|\P{L})/iu;
+            const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|пришли(?:те)?|шли(?:те)?|ок|окей|жду|пример|пробуй|готов(?:а|ы)?|можно)(?:$|\P{L})/iu;
+            if (facts.pendingCardOwed) {
+                pendingCardSilenceMode = true;  // GPT не должен генерить карточки сам
+            }
             if (consentRe.test(text) && facts.pendingCardOwed) {
                 // Re-build на лету из свежих WM данных
                 const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
@@ -262,11 +269,23 @@ export async function startListener(_page?: any) {
                     delete facts.pendingCardOwed;
                     delete facts.pendingCardForUsername;
                     delete facts.pendingCardForTgId;
+                    facts.cardsDeliveredAt = new Date().toISOString();
+                    facts.cardsFollowupSent = false;
                     await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
                     console.log(`[listener] Sent fresh-built cards to @${username}`);
+                    cardsJustDelivered = true;
+                    pendingCardSilenceMode = false;
                 }
             }
         } catch (e: any) { console.warn('[welcome-cards] err:', e.message); }
+
+        // Если pendingCardOwed=true и consent не словлен — listener молчит,
+        // НЕ даём GPT генерить (иначе галлюцинирует фейковую карточку как у @Goloka).
+        // На следующее сообщение юзера снова проверим consent — мб он напишет «да».
+        if (pendingCardSilenceMode && !cardsJustDelivered) {
+            console.log(`[Listener] @${username} pendingCardOwed but no consent — skipping GPT to prevent fake-card hallucination`);
+            return;
+        }
 
         // ── Partnership-intent detector (Принцип #16) ────────────────────────
         // Hot signal — escalate to Roman directly, GPT-prompt уже знает что делать
