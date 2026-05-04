@@ -613,6 +613,32 @@ fastify.post('/admin/cards-followup/tick-now', async (req, reply) => {
     try { return await tickCardsFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
+// ── EMERGENCY: mark all eligible users as meetup_invited (one-shot dedup) ──
+fastify.post('/admin/meetup-followup/mark-all-invited', async (req, reply) => {
+    try {
+        const users = await prisma.user.findMany({
+            where: { status: { notIn: ['BLOCKED', 'REJECTED'] } },
+            select: { id: true, facts: true, tags: true, username: true },
+        });
+        let touched = 0;
+        for (const u of users) {
+            const facts = (u.facts as any) || {};
+            if (facts.meetupInvitedAt) continue;
+            facts.meetupInvitedAt = new Date().toISOString();
+            const tags = Array.isArray(u.tags) ? u.tags as string[] : [];
+            const newTags = tags.includes('meetup_invited') ? tags : [...tags, 'meetup_invited'];
+            await prisma.user.update({
+                where: { id: u.id },
+                data: { facts: facts as any, tags: newTags as any },
+            });
+            touched++;
+        }
+        return { success: true, touched };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Meetup follow-up: status + tick ────────────────────────────────────────
 fastify.get('/admin/meetup-followup/status', async () => getMeetupFollowupStatus());
 fastify.post('/admin/meetup-followup/tick-now', async (req, reply) => {
