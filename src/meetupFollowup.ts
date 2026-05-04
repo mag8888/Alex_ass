@@ -57,6 +57,13 @@ async function tick() {
     let sent = 0;
     for (const u of candidates) {
         if (sent >= PER_TICK_CAP) break;
+
+        // Dedup primary: facts.meetupInvitedAt — гораздо надёжнее tags (которые
+        // не сохранялись по непонятной причине, см. инцидент с Yulia 2026-05-03).
+        const facts = (u.facts as any) || {};
+        if (facts.meetupInvitedAt) continue;
+
+        // Дополнительный safety check — tags fallback (если facts не сохранится)
         const tags = (u.tags as string[]) || [];
         if (Array.isArray(tags) && tags.includes('meetup_invited')) continue;
 
@@ -64,9 +71,17 @@ async function tick() {
         const text = applyGender(tpl.content, u.gender).replace(/\{firstName\}/g, fn);
         try {
             await sendMessageToUser(u.id, text);
+            // Сначала сохраняем dedup, потом считаем «отправлено» — если update
+            // упадёт, на следующем тике увидим что нет meetupInvitedAt и снова
+            // отправим, но это меньшее зло чем спам без dedup.
+            facts.meetupInvitedAt = new Date().toISOString();
             await prisma.user.update({
                 where: { id: u.id },
-                data: { tags: [...tags, 'meetup_invited'] as any, lastBroadcastAt: new Date() },
+                data: {
+                    facts: facts as any,
+                    tags: Array.isArray(tags) ? [...tags, 'meetup_invited'] as any : ['meetup_invited'] as any,
+                    lastBroadcastAt: new Date(),
+                },
             });
             sent++;
             totalSent++;
