@@ -54,6 +54,7 @@ import {
     resumeDailyBatchSweep,
 } from './dailyBatchSweep';
 import { renderDashboardHTML } from './dashboard';
+import { registerAgentApi } from './agentApi';
 
 const fastify = Fastify({ logger: true });
 
@@ -593,6 +594,9 @@ fastify.get('/qa/cancel/:id', async (req, reply) => {
 fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 
 // ── Active dashboard ────────────────────────────────────────────────────────
+// External agent API (read + draft) — gated by AGENT_API_KEY env
+registerAgentApi(fastify);
+
 fastify.get('/admin/dashboard', async (req, reply) => {
     const html = await renderDashboardHTML();
     reply.type('text/html');
