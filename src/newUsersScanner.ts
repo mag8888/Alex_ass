@@ -107,10 +107,15 @@ async function welcomeNewUser(wm: FullWMUser): Promise<{ ok: boolean; reason?: s
     });
     if (hasContact > 0) return { ok: false, reason: 'already contacted' };
 
-    // Включаем autoReply сразу — диалог дальше идёт автономно
+    // Race-guard: проверяем facts.welcomedAt чтобы не дублировать с другим cron
+    const existingFacts = (user.facts as any) || {};
+    if (existingFacts.welcomedAt) return { ok: false, reason: 'already welcomed (race guard)' };
+
+    // Ставим welcomedAt ДО отправки (атомарно), потом autoReply
+    existingFacts.welcomedAt = new Date().toISOString();
     await prisma.user.update({
         where: { id: user.id },
-        data: { autoReply: true, lastBroadcastAt: new Date() },
+        data: { autoReply: true, lastBroadcastAt: new Date(), facts: existingFacts as any },
     });
 
     // Гендер из имени для будущих ответов
