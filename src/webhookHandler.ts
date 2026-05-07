@@ -125,6 +125,16 @@ async function sendWelcome(wm: WMUser) {
         'INBOUND',
     );
 
+    // Race-guard: если другой cron (newUsersScanner / dailyBatchSweep) уже
+    // отправил welcome — не дублируем.
+    const facts = (user.facts as any) || {};
+    if (facts.welcomedAt) {
+        console.log(`[webhook welcome] skip @${user.username} — already welcomed at ${facts.welcomedAt}`);
+        return;
+    }
+    facts.welcomedAt = new Date().toISOString();
+    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } });
+
     // ── Always-Вы fallback ───────────────────────────────────────────────
     // Used when the GPT call fails. Multipart (3 short bursts) — позиционирует
     // бота как «Ваш персональный менеджер по нетворкингу», два понятных оффера

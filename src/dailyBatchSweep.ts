@@ -176,6 +176,12 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
     });
     if (hasContact > 0) return { ok: false, warm: false, reason: 'already contacted' };
 
+    // Дополнительный guard: если другой cron уже шлёт welcome в этот же момент,
+    // facts.welcomedAt будет не пустым — пропускаем
+    const userFresh = await prisma.user.findUnique({ where: { id: user.id }, select: { facts: true } });
+    const ff = (userFresh?.facts as any) || {};
+    if (ff.welcomedAt) return { ok: false, warm: false, reason: 'welcomedAt already set (race protection)' };
+
     if (user.gender === 'UNKNOWN' && wm.firstName) {
         const g = detectGender(wm.firstName);
         if (g !== 'UNKNOWN') await prisma.user.update({ where: { id: user.id }, data: { gender: g } });
@@ -198,18 +204,19 @@ async function welcomeOne(wm: FullWMUser): Promise<{ ok: boolean; warm: boolean;
 
         const facts = (user.facts as any) || {};
         if (msgs.hasEnrichment) {
-            // Храним FLAG что есть pending карточка + telegramId для пересборки.
-            // Текст не кэшируем — листенер re-build на лету из свежих WM данных
-            // (важно если user добавил хобби/интересы между Stage 1 и consent).
             facts.pendingCardOwed = true;
             facts.pendingCardForUsername = wm.username;
             facts.pendingCardForTgId = wm.telegramId;
             warm = true;
-            await prisma.user.update({
-                where: { id: user.id },
-                data: { facts: facts as any },
-            });
         }
+        // Race-guard: ставим welcomedAt ДО отправки. Другие cron'ы увидят
+        // флаг и пропустят. Если send упадёт — дублей лучше избежать чем
+        // получить (юзер потом сам напомнит).
+        facts.welcomedAt = new Date().toISOString();
+        await prisma.user.update({
+            where: { id: user.id },
+            data: { facts: facts as any },
+        });
 
         await sendMessageToUser(user.id, msgs.stage1);
         return { ok: true, warm, uid: user.id, firstName: enriched.firstName || wm.firstName || undefined };
