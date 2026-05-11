@@ -649,6 +649,38 @@ fastify.post('/admin/meetup-followup/tick-now', async (req, reply) => {
     try { return await tickMeetupFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
+// ── WM Marketing API smoke (moneo + partnership) ────────────────────────────
+fastify.get('/admin/wm-marketing/smoke', async (req, reply) => {
+    try {
+        const { smokeTest } = await import('./wmMarketingClient');
+        return await smokeTest();
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+fastify.get('/admin/wm-marketing/moneo', async (req, reply) => {
+    try {
+        const { fetchMoneoUsersAll } = await import('./wmMarketingClient');
+        const r = await fetchMoneoUsersAll();
+        // Return first 3 raw + count для понимания schema
+        return { count: r.users.length, sample: r.users.slice(0, 3) };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+fastify.get('/admin/wm-marketing/partnership', async (req, reply) => {
+    const page = Number((req.query as any).page || 1);
+    try {
+        const { fetchPartnershipUsers } = await import('./wmMarketingClient');
+        const r = await fetchPartnershipUsers(page);
+        return { count: r.users.length, sample: r.users.slice(0, 3), page };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── Admin: manual WM profile patch ──────────────────────────────────────────
 // Прямой patchProfile на WM юзера. Используется когда нужно сразу применить
 // данные (полученные напр. голосом от админа, минуя GPT-extraction).
