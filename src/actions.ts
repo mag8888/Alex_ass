@@ -72,6 +72,9 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
 
 // Upgrade user status when we SEND them a message: NEW → CHAT, and CHAT → LEAD after 3 outgoing msgs
 export async function upgradeStatusOnSend(dialogueId: number) {
+    // ВНИМАНИЕ: эта функция теперь делает ТОЛЬКО NEW → CHAT (первый DM ушёл).
+    // Переход в LEAD теперь в upgradeStatusOnReceive — только когда юзер
+    // реально ответил (Roman: «если не было ответа то это не лид, а просто диалог»).
     try {
         const dialogue = await prisma.dialogue.findUnique({
             where: { id: dialogueId },
@@ -84,46 +87,58 @@ export async function upgradeStatusOnSend(dialogueId: number) {
             await prisma.user.update({ where: { id: user.id }, data: { status: 'CHAT' } });
             console.log(`[DB] ${user.username} NEW → CHAT (first DM sent)`);
             emitEvent({ type: 'user:status', userId: user.id, status: 'CHAT' });
-            return;
-        }
-
-        if (user.status === 'CHAT') {
-            // Count outgoing (OPERATOR/SIMULATOR) messages in this dialogue
-            const outCount = await prisma.message.count({
-                where: { dialogueId, sender: { in: ['OPERATOR', 'SIMULATOR'] } }
-            });
-            if (outCount >= 3) {
-                const updatedUser = await prisma.user.update({ where: { id: user.id }, data: { status: 'LEAD' } });
-                console.log(`[DB] ${user.username} CHAT → LEAD (3 messages sent)`);
-                emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
-                // Mirror to dialogue.outcome for Conversation Brain
-                await prisma.dialogue.updateMany({
-                    where: { id: dialogueId, outcome: { in: ['IN_PROGRESS', 'DROPPED_ICED', 'DROPPED_NO_REPLY'] } },
-                    data: { outcome: 'QUALIFIED' },
-                }).catch(() => { });
-                // Stats: mark recent OutreachAttempts (≤30 days) as LEAD-converted
-                const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
-                await prisma.outreachAttempt.updateMany({
-                    where: { userId: user.id, becameLeadAt: null, sentAt: { gte: cutoff } },
-                    data: { becameLeadAt: new Date() },
-                }).catch(() => { });
-                if (!user.notifiedLead) {
-                    // Try to enrich with WM profile (from cache, no extra HTTP if already fetched)
-                    let wm = null;
-                    try {
-                        const { getUserByTelegramId, isWMEnabled } = await import('./wmClient');
-                        if (isWMEnabled() && updatedUser.telegramId) {
-                            wm = await getUserByTelegramId(updatedUser.telegramId, 'profile');
-                        }
-                    } catch (_) { }
-                    const card = buildUserCard(updatedUser, { title: '🔥 Новый ЛИД', wm });
-                    await notifyLeads(card);
-                    await prisma.user.update({ where: { id: user.id }, data: { notifiedLead: true } });
-                }
-            }
         }
     } catch (e) {
         console.error('[DB] upgradeStatusOnSend error:', e);
+    }
+}
+
+/** Триггерится на ВХОДЯЩЕЕ user-сообщение. Если юзер впервые ответил —
+ *  переводим в LEAD (это и есть «лид» — он проявил интерес). */
+export async function upgradeStatusOnReceive(dialogueId: number) {
+    try {
+        const dialogue = await prisma.dialogue.findUnique({
+            where: { id: dialogueId },
+            include: { user: true },
+        });
+        if (!dialogue?.user) return;
+        const user = dialogue.user;
+        if (user.status !== 'NEW' && user.status !== 'CHAT') return;
+
+        const updatedUser = await prisma.user.update({
+            where: { id: user.id },
+            data: { status: 'LEAD' },
+        });
+        console.log(`[DB] ${user.username} ${user.status} → LEAD (user replied)`);
+        emitEvent({ type: 'user:status', userId: user.id, status: 'LEAD' });
+
+        // Mirror to dialogue.outcome for Conversation Brain
+        await prisma.dialogue.updateMany({
+            where: { id: dialogueId, outcome: { in: ['IN_PROGRESS', 'DROPPED_ICED', 'DROPPED_NO_REPLY'] } },
+            data: { outcome: 'QUALIFIED' },
+        }).catch(() => { });
+
+        // Stats: mark recent OutreachAttempts (≤30 days) as LEAD-converted
+        const cutoff = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000);
+        await prisma.outreachAttempt.updateMany({
+            where: { userId: user.id, becameLeadAt: null, sentAt: { gte: cutoff } },
+            data: { becameLeadAt: new Date() },
+        }).catch(() => { });
+
+        if (!user.notifiedLead) {
+            let wm = null;
+            try {
+                const { getUserByTelegramId, isWMEnabled } = await import('./wmClient');
+                if (isWMEnabled() && updatedUser.telegramId) {
+                    wm = await getUserByTelegramId(updatedUser.telegramId, 'profile');
+                }
+            } catch (_) { }
+            const card = buildUserCard(updatedUser, { title: '🔥 Новый ЛИД (ответил)', wm });
+            await notifyLeads(card);
+            await prisma.user.update({ where: { id: user.id }, data: { notifiedLead: true } });
+        }
+    } catch (e) {
+        console.error('[DB] upgradeStatusOnReceive error:', e);
     }
 }
 
