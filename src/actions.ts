@@ -93,6 +93,15 @@ export async function upgradeStatusOnSend(dialogueId: number) {
     }
 }
 
+/** Helper: возвращает true если юзер хотя бы раз ответил (USER message в диалоге).
+ *  Используется фильтром для broadcast-кампаний — не шлём молчаливым (Принцип #20). */
+export async function hasUserReplied(userId: number): Promise<boolean> {
+    const count = await prisma.message.count({
+        where: { dialogue: { userId }, sender: 'USER' },
+    });
+    return count > 0;
+}
+
 /** Триггерится на ВХОДЯЩЕЕ user-сообщение. Если юзер впервые ответил —
  *  переводим в LEAD (это и есть «лид» — он проявил интерес). */
 export async function upgradeStatusOnReceive(dialogueId: number) {
