@@ -659,6 +659,25 @@ fastify.get('/admin/wm-marketing/probe', async (req, reply) => {
     }
 });
 
+// ── EMERGENCY: downgrade fake LEADs (status=LEAD but no USER reply) ─────────
+fastify.post('/admin/downgrade-fake-leads', async (req, reply) => {
+    try {
+        const fakeLeads = await prisma.user.findMany({
+            where: {
+                status: 'LEAD',
+                dialogues: { every: { messages: { none: { sender: 'USER' } } } },
+            },
+            select: { id: true, username: true, telegramId: true },
+        });
+        for (const u of fakeLeads) {
+            await prisma.user.update({ where: { id: u.id }, data: { status: 'CHAT', notifiedLead: false } });
+        }
+        return { success: true, downgraded: fakeLeads.length, users: fakeLeads.map(u => u.username || u.telegramId) };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── WM Marketing API smoke (moneo + partnership) ────────────────────────────
 fastify.get('/admin/wm-marketing/smoke', async (req, reply) => {
     try {

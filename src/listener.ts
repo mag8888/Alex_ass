@@ -8,6 +8,7 @@ import {
     sendMessageToUser,
     sendMultipart,
     upgradeStatusOnSend,
+    upgradeStatusOnReceive,
 } from "./actions";
 import { generateResponse } from "./gpt";
 import { DialogueStage } from '@prisma/client';
@@ -249,6 +250,9 @@ export async function startListener(_page?: any) {
         const persistedText = isVoice ? `🎙️ ${text}` : text;
         await saveMessageToDb(dialogue.id, 'USER', persistedText, 'RECEIVED');
         emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'USER', text: persistedText });
+
+        // Лид считается лидом только если ответил — upgrade NEW/CHAT → LEAD
+        upgradeStatusOnReceive(dialogue.id).catch(e => console.warn('[upgrade] err:', e.message));
 
         // ── Welcome flow Stage 2 — отправка brief + full визитки на consent ─
         // Юзер ответил "да/интересно/давай" на Stage 1 → шлём краткую И полную
