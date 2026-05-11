@@ -649,6 +649,16 @@ fastify.post('/admin/meetup-followup/tick-now', async (req, reply) => {
     try { return await tickMeetupFollowupNow(); } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
+// ── WM Marketing probe — auto-discover correct path + auth ─────────────────
+fastify.get('/admin/wm-marketing/probe', async (req, reply) => {
+    try {
+        const { runProbe } = await import('./wmMarketingProbe');
+        return await runProbe();
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── WM Marketing API smoke (moneo + partnership) ────────────────────────────
 fastify.get('/admin/wm-marketing/smoke', async (req, reply) => {
     try {
