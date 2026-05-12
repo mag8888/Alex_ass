@@ -247,7 +247,7 @@ export async function sendDraftMessage(page: any, messageId: number, customText?
 }
 
 // Refactored to use userId and GramJS directly
-export async function sendMessageToUser(userId: number, text: string) {
+export async function sendMessageToUser(userId: number, text: string, opts?: { _skipDelay?: boolean }) {
     // Multi-part marker: split on "---SPLIT---" lines into separate messages
     // with realistic typing delays. Used by GPT-generated replies that need
     // to read like WhatsApp (Roman: cold first-touch must be 2-4 short bursts).
@@ -258,6 +258,14 @@ export async function sendMessageToUser(userId: number, text: string) {
             return sendMultipart(userId, parts);
         }
         text = parts[0] || text;
+    }
+
+    // Realistic delay для прямого вызова (когда не из sendMultipart).
+    // Имитация: чтение → обдумывание → набор → отправка.
+    // _skipDelay используется когда sendMultipart уже сделал все паузы.
+    if (!opts?._skipDelay && text) {
+        await thinkingPause();
+        await showTyping(userId, computeTypingMs(text));
     }
     console.log(`[ACTION] sendMessageToUser called for userId: ${userId}`);
     const client = getClient();
@@ -313,9 +321,31 @@ export async function sendMessageToUser(userId: number, text: string) {
 }
 
 /**
+ * Compute realistic typing duration for given text length.
+ * Real human typing speed: ~40 WPM = ~5 chars/sec (slow), 60+ WPM = ~8 chars/sec (fast).
+ * We use 12-15 chars/sec average — a bit faster than slow typing — plus jitter.
+ * Bounds: min 5s (very short msgs), max 25s (very long msgs).
+ * Roman: "слишком быстро отвечает и нет ощущения диалога".
+ */
+function computeTypingMs(text: string): number {
+    const len = (text || '').length;
+    const baseMs = Math.round((len / 13) * 1000);  // ~13 chars/sec
+    const jitter = Math.floor(Math.random() * 4000); // 0-4s
+    return Math.max(5000, Math.min(25000, baseMs + jitter));
+}
+
+/**
+ * Pre-typing "thinking" pause — 2-6s random. Имитирует чтение сообщения юзера.
+ */
+async function thinkingPause() {
+    const wait = 2000 + Math.floor(Math.random() * 4000);
+    await new Promise(r => setTimeout(r, wait));
+}
+
+/**
  * Show typing indicator for `durationMs` and then resolve.
- * Roman: бот должен показывать "печатает" 4-7 сек перед ответом — иначе
- * чтение и мгновенный ответ выглядят роботно.
+ * Roman: бот должен показывать "печатает" — иначе чтение и мгновенный ответ
+ * выглядят роботно. Длительность зависит от длины сообщения.
  */
 async function showTyping(userId: number, durationMs: number) {
     try {
@@ -344,21 +374,20 @@ async function showTyping(userId: number, durationMs: number) {
  * Default flow: typing(4-7s) → message → pause(1.5-2.5s) → typing(3-5s) → next message
  * Roman: cold first-touch must be 2-4 short messages with "печатает..." UX.
  */
-export async function sendMultipart(userId: number, parts: string[], opts?: { delayMs?: [number, number]; typingMsFirst?: [number, number]; typingMsRest?: [number, number] }) {
-    const [minMs, maxMs] = opts?.delayMs ?? [1500, 2500];
-    const [tFirstMin, tFirstMax] = opts?.typingMsFirst ?? [4000, 7000];
-    const [tRestMin, tRestMax] = opts?.typingMsRest ?? [3000, 5000];
+export async function sendMultipart(userId: number, parts: string[], opts?: { skipThinking?: boolean }) {
     const filtered = parts.map(p => p.trim()).filter(Boolean);
     for (let i = 0; i < filtered.length; i++) {
-        if (i > 0) {
-            const wait = minMs + Math.floor(Math.random() * (maxMs - minMs));
-            await new Promise(r => setTimeout(r, wait));
+        if (i === 0 && !opts?.skipThinking) {
+            // Перед самым первым burst-ом — "обдумывание" 2-6с (имитация чтения сообщения юзера).
+            await thinkingPause();
+        } else if (i > 0) {
+            // Между burst-ами — короткая пауза 2-4с (как будто переключаемся на след. мысль).
+            const between = 2000 + Math.floor(Math.random() * 2000);
+            await new Promise(r => setTimeout(r, between));
         }
-        const tMin = i === 0 ? tFirstMin : tRestMin;
-        const tMax = i === 0 ? tFirstMax : tRestMax;
-        const typingDur = tMin + Math.floor(Math.random() * (tMax - tMin));
+        const typingDur = computeTypingMs(filtered[i]);
         await showTyping(userId, typingDur);
-        await sendMessageToUser(userId, filtered[i]);
+        await sendMessageToUser(userId, filtered[i], { _skipDelay: true });
     }
     return { sent: filtered.length };
 }

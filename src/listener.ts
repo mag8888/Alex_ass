@@ -163,7 +163,7 @@ export async function startListener(_page?: any) {
         // НО: voice от админа сохраняем + если есть pendingCardBrief/Full — обрабатываем consent.
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
             // Delayed read для admin тоже — иначе Роман видит мгновенный read при self-test
-            const adminReadDelay = 4000 + Math.floor(Math.random() * 3000);
+            const adminReadDelay = 6000 + Math.floor(Math.random() * 6000) /* 6-12s */;
             setTimeout(() => message.markAsRead().catch(() => { }), adminReadDelay);
             try {
                 const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
@@ -233,7 +233,7 @@ export async function startListener(_page?: any) {
         // ── Delayed mark-as-read (Roman: instant read = surveilled feeling)
         // Откладываем «прочитано» на 4-7 сек — синхронно с typing-индикатором
         // на исходящем ответе. Юзер видит read tick → typing → ответ.
-        const readDelayMs = 4000 + Math.floor(Math.random() * 3000);
+        const readDelayMs = 6000 + Math.floor(Math.random() * 6000) /* 6-12s */;
         setTimeout(() => {
             message.markAsRead().catch(() => { });
         }, readDelayMs);
