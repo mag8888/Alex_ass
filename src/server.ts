@@ -597,6 +597,30 @@ fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 // External agent API (read + draft) — gated by AGENT_API_KEY env
 registerAgentApi(fastify);
 
+// ── DNAI Studio integration: smoke + health + status (no auth on health) ───
+fastify.get('/admin/dnai/smoke', async (req, reply) => {
+    try {
+        const { smoke } = await import('./dnaiClient');
+        return await smoke();
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+fastify.get('/agent/health', async () => ({
+    status: 'ok',
+    version: '1.0.0',
+    uptime: Math.floor(process.uptime()),
+    serverTime: new Date().toISOString(),
+}));
+
+fastify.get('/agent/integration-status', async () => ({
+    enabled: process.env.INTEGRATION_DNAI_ENABLED === 'true',
+    fallbackMode: process.env.INTEGRATION_DNAI_ENABLED === 'true' ? 'review-chain' : 'manual-only',
+    dnaiKeyConfigured: !!process.env.DNAI_STUDIO_API_KEY,
+    dnaiBaseUrl: process.env.DNAI_STUDIO_BASE_URL || 'https://dnai.up.railway.app',
+}));
+
 fastify.get('/admin/dashboard', async (req, reply) => {
     const html = await renderDashboardHTML();
     reply.type('text/html');

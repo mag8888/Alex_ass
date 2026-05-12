@@ -584,27 +584,70 @@ export async function startListener(_page?: any) {
             }
         }
 
+        // ── DNAI Studio review-chain (Артур→Марк→Аида) если включена интеграция ──
+        // На наш candidate draft (gptResult.reply) DNAI делает 3-step review.
+        // Возвращает {verdict: GO/TWEAK/NO-GO, text}.
+        // NO-GO → notify Roman + не отправляем.
+        let finalReply = gptResult.reply;
+        let dnaiNoGoReason: string | null = null;
+        try {
+            const { isDnaiEnabled, review } = await import('./dnaiClient');
+            if (isDnaiEnabled()) {
+                const reviewRes = await review({
+                    dialogueId: String(dialogue.id),
+                    draft: gptResult.reply,
+                    recentMessages: recentMessages.slice(-10).map(m => ({
+                        sender: (m.sender === 'USER' ? 'USER' : 'OPERATOR') as 'USER' | 'OPERATOR',
+                        text: m.text || '',
+                        createdAt: new Date().toISOString(),
+                    })),
+                    clientContext: { stage: currentStage, telegramUsername: '@' + username },
+                });
+                console.log(`[dnai-review] @${username} verdict=${reviewRes.verdict} reason=${reviewRes.reason?.slice(0, 100)}`);
+                if (reviewRes.verdict === 'NO-GO') {
+                    dnaiNoGoReason = reviewRes.reason || 'NO-GO by Aida';
+                    await notifyAdmin(
+                        `🛑 NO-GO от Аиды (@${username}, d=${dialogue.id})\n\n` +
+                        `Причина: ${reviewRes.reason}\n` +
+                        `Эскалация: ${reviewRes.escalation?.to || '@roman_arctur'}\n\n` +
+                        `Наш draft (НЕ отправлен): «${gptResult.reply.slice(0, 200)}»`,
+                        { rateLimitKey: `dnai-nogo-${user.id}` },
+                    );
+                } else {
+                    // GO или TWEAK — используем text из review (это уже одобренный/исправленный)
+                    finalReply = reviewRes.text || gptResult.reply;
+                }
+            }
+        } catch (e: any) {
+            console.warn('[dnai-review] err (продолжаем со своим draft):', e.message);
+        }
+
+        if (dnaiNoGoReason) {
+            console.log(`[Listener] DNAI NO-GO — не отправляем @${username}`);
+            return;
+        }
+
         // ── Send (auto-mode) or stash as draft ──────────────────────────────
         // Roman: эмодзи-реакция ставится только когда бот реально ответил —
         // не превентивно, чтобы юзер не видел "просмотрено и забыто".
         let replyDispatched = false;
         if (user.autoReply) {
             try {
-                await sendMessageToUser(user.id, gptResult.reply);
+                await sendMessageToUser(user.id, finalReply);
                 console.log(`[Listener] Auto-sent reply to @${username}`);
                 replyDispatched = true;
             } catch (sendErr: any) {
                 console.error(`[Listener] Auto-send failed:`, sendErr.message);
                 await notifyAdmin(`⚠️ Не смог автоотправить @${username}: ${sendErr.message}`, { rateLimitKey: 'send-error' });
-                await createDraftMessage(dialogue.id, gptResult.reply);
+                await createDraftMessage(dialogue.id, finalReply);
             }
         } else {
-            const draft = await createDraftMessage(dialogue.id, gptResult.reply);
-            emitEvent({ type: 'message:draft', dialogueId: dialogue.id, userId: user.id, text: gptResult.reply });
+            const draft = await createDraftMessage(dialogue.id, finalReply);
+            emitEvent({ type: 'message:draft', dialogueId: dialogue.id, userId: user.id, text: finalReply });
             try {
                 enqueuePending(draft.id, dialogue.id);
-                await notifyAdminAboutPending(draft.id, dialogue.id, gptResult.reply);
-                replyDispatched = true;  // pending тоже считаем за "ответим" (через 10 мин)
+                await notifyAdminAboutPending(draft.id, dialogue.id, finalReply);
+                replyDispatched = true;
             } catch (e: any) {
                 console.warn('[pending] enqueue err:', e.message);
             }
