@@ -584,15 +584,24 @@ export async function startListener(_page?: any) {
             }
         }
 
-        // ── DNAI Studio review-chain (Артур→Марк→Аида) если включена интеграция ──
-        // На наш candidate draft (gptResult.reply) DNAI делает 3-step review.
-        // Возвращает {verdict: GO/TWEAK/NO-GO, text}.
-        // NO-GO → notify Roman + не отправляем.
+        // ── DNAI Studio review-chain (Артур→Марк→Аида) ──────────────────────
+        // Per docs/TZ-aiass-team.md (DNAI Studio repo). Hybrid architecture:
+        // мы генерим candidate draft → DNAI делает 3-step review → возвращает
+        // GO/TWEAK/NO-GO + text. NO-GO → notifyAdmin + skip send.
+        // Idempotency-Key = последний USER messageId чтобы повтор retry-запроса
+        // не пересчитывал.
         let finalReply = gptResult.reply;
         let dnaiNoGoReason: string | null = null;
+        let dnaiVerdict: string | null = null;
+        let dnaiRunId: string | null = null;
+        const dnaiStartedAt = Date.now();
         try {
             const { isDnaiEnabled, review } = await import('./dnaiClient');
             if (isDnaiEnabled()) {
+                // Idempotency-Key: уникальный per (dialog, последний USER message)
+                const userMsgs = recentMessages.filter((m: any) => m.sender === 'USER');
+                const lastUserMsgId = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].id : Date.now();
+                const idempKey = `msg-${dialogue.id}-${lastUserMsgId}`;
                 const reviewRes = await review({
                     dialogueId: String(dialogue.id),
                     draft: gptResult.reply,
@@ -602,24 +611,38 @@ export async function startListener(_page?: any) {
                         createdAt: new Date().toISOString(),
                     })),
                     clientContext: { stage: currentStage, telegramUsername: '@' + username },
-                });
-                console.log(`[dnai-review] @${username} verdict=${reviewRes.verdict} reason=${reviewRes.reason?.slice(0, 100)}`);
+                }, idempKey);
+                dnaiVerdict = reviewRes.verdict;
+                dnaiRunId = reviewRes.metadata?.runId || null;
+                const latencyMs = Date.now() - dnaiStartedAt;
+                console.log(`[dnai-review] @${username} verdict=${reviewRes.verdict} runId=${dnaiRunId} latencyMs=${latencyMs} reason=${reviewRes.reason?.slice(0, 100)}`);
                 if (reviewRes.verdict === 'NO-GO') {
                     dnaiNoGoReason = reviewRes.reason || 'NO-GO by Aida';
                     await notifyAdmin(
                         `🛑 NO-GO от Аиды (@${username}, d=${dialogue.id})\n\n` +
                         `Причина: ${reviewRes.reason}\n` +
-                        `Эскалация: ${reviewRes.escalation?.to || '@roman_arctur'}\n\n` +
+                        `Эскалация: ${reviewRes.escalation?.to || '@roman_arctur'}\n` +
+                        `runId: ${dnaiRunId}\n\n` +
                         `Наш draft (НЕ отправлен): «${gptResult.reply.slice(0, 200)}»`,
                         { rateLimitKey: `dnai-nogo-${user.id}` },
                     );
+                    // Per TZ §2.4: помечаем диалог как awaiting human через tag
+                    // (наш schema enum DialogueStage не содержит AWAITING_HUMAN).
+                    const factsX = (user.facts as any) || {};
+                    factsX.awaitingHumanSince = new Date().toISOString();
+                    factsX.lastNoGoReason = reviewRes.reason;
+                    await prisma.user.update({
+                        where: { id: user.id },
+                        data: { facts: factsX as any, autoReply: false },
+                    }).catch(() => { });
                 } else {
-                    // GO или TWEAK — используем text из review (это уже одобренный/исправленный)
+                    // GO или TWEAK — используем text из review (одобренный/исправленный)
                     finalReply = reviewRes.text || gptResult.reply;
                 }
             }
         } catch (e: any) {
-            console.warn('[dnai-review] err (продолжаем со своим draft):', e.message);
+            console.warn('[dnai-review] err (fallback к локальному draft):', e.message);
+            // Per TZ §2.6: на error НЕ retry в этом же тике, fallback к старому flow
         }
 
         if (dnaiNoGoReason) {

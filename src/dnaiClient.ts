@@ -7,12 +7,27 @@
 //
 // Per docs/api-s2s-integration.md (DNAI Studio repo).
 
-const BASE_URL = process.env.DNAI_STUDIO_BASE_URL || 'https://dnai.up.railway.app';
+// Env naming aligned with TZ-aiass-team.md
+const BASE_URL = process.env.DNAI_BASE_URL || process.env.DNAI_STUDIO_BASE_URL || 'https://dnai.up.railway.app';
 const API_KEY = process.env.DNAI_STUDIO_API_KEY || '';
-const TIMEOUT_MS = Number(process.env.DNAI_STUDIO_TIMEOUT_MS || 30_000);
+const TIMEOUT_MS = Number(process.env.DNAI_STUDIO_TIMEOUT_MS || 35_000);  // per TZ default 35s
 
+/**
+ * Per TZ: enabled by default UNLESS explicitly set to "false".
+ * No API key → effectively disabled regardless of flag.
+ */
 export function isDnaiEnabled(): boolean {
-    return !!API_KEY && process.env.INTEGRATION_DNAI_ENABLED === 'true';
+    if (!API_KEY) return false;
+    const flag = process.env.DNAI_INTEGRATION_ENABLED;
+    return flag !== 'false';
+}
+
+/**
+ * Mask API key for safe logging (per TZ §2.1: «НИКОГДА не логируйте сам ключ»).
+ */
+export function maskApiKey(): string {
+    if (!API_KEY) return '(not set)';
+    return API_KEY.slice(0, 6) + '...' + API_KEY.slice(-5);
 }
 
 function headers(extra: Record<string, string> = {}): Record<string, string> {
@@ -86,11 +101,13 @@ export async function ping(): Promise<{ status: string; service?: string; versio
     return request('/api/integration/ping', { method: 'GET' }, 8000);
 }
 
-export async function review(req: ReviewRequest): Promise<ReviewResponse> {
+export async function review(req: ReviewRequest, idempotencyKey?: string): Promise<ReviewResponse> {
     const agentId = 'arthur';
+    const extraHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
+    if (idempotencyKey) extraHeaders['Idempotency-Key'] = idempotencyKey;
     return request(`/api/agents/${agentId}/review`, {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: extraHeaders,
         body: JSON.stringify({
             dialogueId: req.dialogueId,
             draft: req.draft,
@@ -100,6 +117,19 @@ export async function review(req: ReviewRequest): Promise<ReviewResponse> {
             options: req.options || {},
         }),
     }, req.options?.timeout ?? TIMEOUT_MS);
+}
+
+/**
+ * Detect topic of conversation for project_key lookup.
+ * Returns 'moneo-game' / 'alma-product' / 'wm-rules' / null.
+ */
+export function detectTopic(text: string): string | null {
+    if (!text) return null;
+    const t = text.toLowerCase();
+    if (/(moneo|монео|турнир|игр[аеу]|cashflow|кешфло)/iu.test(t)) return 'moneo-game';
+    if (/(alma|алма|ии[\s-]?агент|бот[\s-]?для|автоматизаци|внедрени|интеграц)/iu.test(t)) return 'alma-product';
+    if (/(wave\s*match|нетворкинг|знакомств|партн[её]р|спец|клиент)/iu.test(t)) return 'wm-rules';
+    return null;
 }
 
 export async function memoryLoad(agentId: string, projectKey: string): Promise<{ items: MemoryItem[]; count: number }> {
