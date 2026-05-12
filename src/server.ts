@@ -787,13 +787,13 @@ fastify.get('/admin/wm-recent', async (req, reply) => {
 // ── Multi-part send (cold outreach / WhatsApp-style sequence) ───────────────
 fastify.post('/users/:id/send-multipart', async (req, reply) => {
     const { id } = req.params as { id: string };
-    const { parts, delayMs } = req.body as { parts: string[]; delayMs?: [number, number] };
+    const { parts } = req.body as { parts: string[] };
     if (!Array.isArray(parts) || parts.length === 0) {
         return reply.code(400).send({ error: 'parts must be non-empty array' });
     }
     try {
         const { sendMultipart } = await import('./actions');
-        const result = await sendMultipart(Number(id), parts, { delayMs });
+        const result = await sendMultipart(Number(id), parts);
         return { success: true, ...result };
     } catch (e: any) {
         return reply.code(500).send({ error: e.message });
