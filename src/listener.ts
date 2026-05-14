@@ -22,7 +22,7 @@ import { detectPartnershipIntent } from './partnershipDetector';
 import { detectEscalationIntent } from './escalationDetector';
 import { enrichProfile } from './profileEnricher';
 import { buildWelcomeMessages } from './welcomeBuilder';
-import { fetchExternalContext, formatForPrompt as formatExternalContext } from './externalContext';
+import { fetchExternalContext, formatForPrompt as formatExternalContext, detectConsumableContent } from './externalContext';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -241,7 +241,9 @@ export async function startListener(_page?: any) {
         // latest USER в диалоге, иначе skip (новое сообщение пришло — старое
         // обработает следующий handler).
         const captureMessageId = message.id;
+        let needRaceCheck = false;  // any path that does long defer must set this
         const isSlowMode = Math.random() < 0.25;
+        if (isSlowMode) needRaceCheck = true;
         if (isSlowMode) {
             const waitMs = 300_000 + Math.floor(Math.random() * 300_000);  // 5-10 min
             console.log(`[timing] @${username} slow mode: defer ${Math.round(waitMs / 60_000)}min`);
@@ -266,6 +268,41 @@ export async function startListener(_page?: any) {
 
         // Лид считается лидом только если ответил — upgrade NEW/CHAT → LEAD
         upgradeStatusOnReceive(dialogue.id).catch(e => console.warn('[upgrade] err:', e.message));
+
+        // ── Consumable content (Zoom/video/PDF/article) ─────────────────────
+        // Roman 2026-05-14: «человек не может за 1 минуту посмотреть зум и дать
+        // ОС. Через час пиши что ознакомился и сделал выводы».
+        // Если USER прислал ссылку на контент требующий времени:
+        //   1. короткий ACK сейчас («Спасибо, гляну, отпишусь»)
+        //   2. отложка 30-90 мин (kind-зависимая)
+        //   3. потом — substantive reply через нормальный pipeline
+        // Race-check в slow mode перед substantive send уже есть — он покроет
+        // случай если за час юзер написал что-то новое.
+        const consumable = detectConsumableContent(text);
+        if (consumable) {
+            console.log(`[consumable] @${username} kind=${consumable.kind} ACK now + defer ${Math.round(consumable.delayMs / 60_000)}min`);
+            try { await message.markAsRead(); } catch (_) { /* ignore */ }
+            // Маленький humanlike jitter перед ACK (3-12s = «увидел, пишу»)
+            const ackJitter = 3000 + Math.floor(Math.random() * 9000);
+            await new Promise(r => setTimeout(r, ackJitter));
+            try {
+                await sendMessageToUser(user.id, consumable.ackTemplate);
+                await saveMessageToDb(dialogue.id, 'OPERATOR', consumable.ackTemplate, 'SENT');
+                emitEvent({ type: 'message:new', dialogueId: dialogue.id, userId: user.id, sender: 'OPERATOR', text: consumable.ackTemplate });
+            } catch (ackErr: any) {
+                console.warn(`[consumable] ACK send failed:`, ackErr.message);
+                // Если ACK не ушёл — не делаем длинную паузу, пусть нормальный pipeline
+                // отработает (там тоже race-check etc).
+            }
+            // Длинная отложка перед substantive reply.
+            // markAsRead уже сделан выше; race-check в slow-mode pre-send блоке
+            // ниже сработает по persistedText, поэтому переиспользуем флаг.
+            await new Promise(r => setTimeout(r, consumable.delayMs));
+            // С этого момента продолжаем нормальный pipeline (GPT prep, DNAI,
+            // send). Race-check в pre-send блоке проверит что USER не написал
+            // ничего нового за этот час — если написал, abort substantive reply.
+            needRaceCheck = true;
+        }
 
         // ── Welcome flow Stage 2 — отправка brief + full визитки на consent ─
         // Юзер ответил "да/интересно/давай" на Stage 1 → шлём краткую И полную
@@ -701,17 +738,17 @@ export async function startListener(_page?: any) {
         // Roman 2026-05-13: «после открытия сообщения не должно проходить более минуты».
         // markAsRead делаем ТУТ — после GPT/DNAI generation, прямо перед send.
         // typing+send занимают 5-30с → юзер видит read → typing → message ≤1 мин.
-        if (isSlowMode) {
-            // Race-check: после ожидания 5-10 мин — может пришло новое USER msg.
-            // Если да — этот handler skip, новое сообщение обработает следующий.
+        if (needRaceCheck) {
+            // Race-check: после ожидания (slow mode 5-10мин или consumable 30-90мин)
+            // могло прийти новое USER msg. Если да — skip substantive reply,
+            // новое сообщение обработает следующий handler invocation.
             const latestUser = await prisma.message.findFirst({
                 where: { dialogueId: dialogue.id, sender: 'USER' },
                 orderBy: { id: 'desc' },
                 select: { id: true, text: true },
             });
-            // Сравниваем по тексту т.к. id внутренний DB-id, captureMessageId — TG-msgId
             if (latestUser && latestUser.text !== persistedText) {
-                console.log(`[timing] @${username} slow mode aborted — newer USER msg arrived during wait`);
+                console.log(`[timing] @${username} deferred reply aborted — newer USER msg arrived during wait`);
                 return;
             }
         }
