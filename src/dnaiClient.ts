@@ -7,10 +7,14 @@
 //
 // Per docs/api-s2s-integration.md (DNAI Studio repo).
 
-// Env naming aligned with TZ-aiass-team.md
+// Env naming aligned with TZ-aiass-team.md.
+// Принимаем оба имени для key/timeout: короткое (DNAI_API_KEY) — что было
+// выставлено на Railway, и длинное (DNAI_STUDIO_API_KEY) — из TZ. Любое
+// непустое используется. Это убирает silent-misconfig если оператор
+// добавил переменную не под тем именем.
 const BASE_URL = process.env.DNAI_BASE_URL || process.env.DNAI_STUDIO_BASE_URL || 'https://dnai.up.railway.app';
-const API_KEY = process.env.DNAI_STUDIO_API_KEY || '';
-const TIMEOUT_MS = Number(process.env.DNAI_STUDIO_TIMEOUT_MS || 35_000);  // per TZ default 35s
+const API_KEY = process.env.DNAI_STUDIO_API_KEY || process.env.DNAI_API_KEY || '';
+const TIMEOUT_MS = Number(process.env.DNAI_STUDIO_TIMEOUT_MS || process.env.DNAI_TIMEOUT_MS || 35_000);  // per TZ default 35s
 
 /**
  * Per TZ: enabled by default UNLESS explicitly set to "false".
@@ -164,7 +168,16 @@ export async function memorySave(req: { agent_id: string; project_key: string; c
 
 export interface SmokeResult {
     keyConfigured: boolean;
+    keyMasked: string;
     baseUrl: string;
+    envCheck: {
+        DNAI_STUDIO_API_KEY: boolean;
+        DNAI_API_KEY: boolean;
+        DNAI_BASE_URL: boolean;
+        DNAI_INTEGRATION_ENABLED: string | null;
+        DNAI_REVIEW_MODE: string | null;
+        DNAI_ROLLOUT_PCT: string | null;
+    };
     ping: { ok: boolean; data?: any; err?: string };
     memoryProjects: { ok: boolean; data?: any; err?: string };
     memoryLoad: { ok: boolean; data?: any; err?: string };
@@ -174,7 +187,16 @@ export interface SmokeResult {
 export async function smoke(): Promise<SmokeResult> {
     const r: SmokeResult = {
         keyConfigured: !!API_KEY,
+        keyMasked: maskApiKey(),
         baseUrl: BASE_URL,
+        envCheck: {
+            DNAI_STUDIO_API_KEY: !!process.env.DNAI_STUDIO_API_KEY,
+            DNAI_API_KEY: !!process.env.DNAI_API_KEY,
+            DNAI_BASE_URL: !!process.env.DNAI_BASE_URL,
+            DNAI_INTEGRATION_ENABLED: process.env.DNAI_INTEGRATION_ENABLED ?? null,
+            DNAI_REVIEW_MODE: process.env.DNAI_REVIEW_MODE ?? null,
+            DNAI_ROLLOUT_PCT: process.env.DNAI_ROLLOUT_PCT ?? null,
+        },
         ping: { ok: false },
         memoryProjects: { ok: false },
         memoryLoad: { ok: false },
