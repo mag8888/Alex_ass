@@ -149,3 +149,107 @@ export function formatForPrompt(items: ExtractedContext[]): string {
     }
     return lines.join('\n');
 }
+
+// ── Consumable content detection ───────────────────────────────────────────
+// Roman 2026-05-14: «человек не может за 1 минуту посмотреть зум и дать ОС.
+// Через час если человек что-то даёт (сайт/видео/ссылку) → пиши что
+// ознакомился и сделал выводы через час».
+//
+// Если USER прислал ссылку на контент, который реально требует времени для
+// потребления (Zoom-встреча, видео, длинная статья, PDF) — бот должен:
+//   1. Отправить короткое ACK ("Спасибо, гляну, отпишусь")
+//   2. Подождать 45-90 минут (имитация настоящего ознакомления)
+//   3. Только потом отправить substantive reply с выводами
+//
+// Это закрывает основной паттерн «бот за минуту посмотрел Zoom» = палево.
+
+export type ConsumableKind = 'zoom' | 'video' | 'youtube' | 'article' | 'pdf';
+
+export interface ConsumableContent {
+    kind: ConsumableKind;
+    delayMs: number;          // отложка перед substantive reply
+    ackTemplate: string;      // короткое подтверждение от живого человека
+}
+
+const ACK_VARIANTS: Record<ConsumableKind, string[]> = {
+    zoom: [
+        'Спасибо! Гляну запись и отпишусь, как разберусь.',
+        'Принял, посмотрю и вернусь с мыслями.',
+        'Понял, гляну и напишу свои выводы.',
+    ],
+    video: [
+        'Спасибо за видео! Посмотрю и вернусь с фидбэком.',
+        'Принял, гляну и отпишусь.',
+    ],
+    youtube: [
+        'Спасибо за ссылку! Посмотрю и отпишусь.',
+        'Принял, гляну ролик и вернусь.',
+    ],
+    article: [
+        'Спасибо, прочитаю и отпишусь.',
+        'Принял, гляну материал и вернусь с мыслями.',
+    ],
+    pdf: [
+        'Спасибо за документ! Прочитаю и вернусь.',
+        'Принял PDF, изучу и отпишусь.',
+    ],
+};
+
+function pickAck(kind: ConsumableKind): string {
+    const v = ACK_VARIANTS[kind];
+    return v[Math.floor(Math.random() * v.length)];
+}
+
+export function detectConsumableContent(text: string): ConsumableContent | null {
+    if (!text) return null;
+
+    // Zoom (meeting / recording) — самый частый кейс per Roman feedback
+    if (/zoom\.us\/(j|rec|meeting|webinar)\//i.test(text) || /us\d+web\.zoom\.us/i.test(text)) {
+        return {
+            kind: 'zoom',
+            // 60-90 мин (реалистичная длительность Zoom + время разобрать)
+            delayMs: 60 * 60_000 + Math.floor(Math.random() * 30 * 60_000),
+            ackTemplate: pickAck('zoom'),
+        };
+    }
+
+    // YouTube / Vimeo / Rutube
+    if (/(youtube\.com\/(watch|live|shorts)|youtu\.be\/|vimeo\.com\/\d|rutube\.ru\/video)/i.test(text)) {
+        return {
+            kind: 'youtube',
+            // 30-60 мин (типичный ролик)
+            delayMs: 30 * 60_000 + Math.floor(Math.random() * 30 * 60_000),
+            ackTemplate: pickAck('youtube'),
+        };
+    }
+
+    // Прямые ссылки на видео-файлы / стриминг
+    if (/\.(mp4|mov|webm|m3u8)(\?|$)/i.test(text)) {
+        return {
+            kind: 'video',
+            delayMs: 30 * 60_000 + Math.floor(Math.random() * 30 * 60_000),
+            ackTemplate: pickAck('video'),
+        };
+    }
+
+    // PDF документы
+    if (/\.pdf(\?|$)/i.test(text)) {
+        return {
+            kind: 'pdf',
+            // 30-60 мин (чтение документа)
+            delayMs: 30 * 60_000 + Math.floor(Math.random() * 30 * 60_000),
+            ackTemplate: pickAck('pdf'),
+        };
+    }
+
+    // Длинные статьи / медиа
+    if (/(medium\.com\/|substack\.com\/|habr\.com\/|vc\.ru\/|forbes\.|techcrunch\.|bloomberg\.|nytimes\.|economist\.|harvard\.edu|hbr\.org)/i.test(text)) {
+        return {
+            kind: 'article',
+            delayMs: 25 * 60_000 + Math.floor(Math.random() * 25 * 60_000),
+            ackTemplate: pickAck('article'),
+        };
+    }
+
+    return null;
+}
