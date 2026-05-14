@@ -37,14 +37,15 @@ async function run() {
         if (!r.items.some((i: any) => i.content?.includes('1000'))) throw new Error('No "1000" in items');
     }, results);
 
-    await test('4. Review GO/TWEAK — приветствие', async () => {
+    await test('4. Review GO/TWEAK — приветствие (mode=fallback)', async () => {
         const r = await review({
             dialogueId: 't' + Date.now(),
             draft: 'Здравствуйте! По какому продукту пишете: Moneo, Alma или Wave Match?',
             recentMessages: [{ sender: 'USER', text: 'Привет', createdAt: new Date().toISOString() }],
             clientContext: { stage: 'DISCOVERY' },
+            mode: 'fallback',
         });
-        if (!['GO', 'TWEAK'].includes(r.verdict)) throw new Error(`Got ${r.verdict}`);
+        if (!['GO', 'TWEAK', 'GO_FALLBACK'].includes(r.verdict)) throw new Error(`Got ${r.verdict}`);
     }, results);
 
     await test('5. Review TWEAK ты→Вы', async () => {
@@ -53,8 +54,9 @@ async function run() {
             draft: 'Привет, ты что хотел?',
             recentMessages: [{ sender: 'USER', text: 'Здравствуйте', createdAt: new Date().toISOString() }],
             clientContext: { stage: 'DISCOVERY' },
+            mode: 'fallback',
         });
-        if (r.verdict === 'GO') throw new Error('Should be TWEAK or NO-GO for ты');
+        if (!['TWEAK', 'NO-GO', 'GO_FALLBACK'].includes(r.verdict)) throw new Error(`Got ${r.verdict}`);
     }, results);
 
     await test('6. Review NO-GO — партнёрство', async () => {
@@ -63,9 +65,10 @@ async function run() {
             draft: 'Условия партнёрства: 20% от продаж',
             recentMessages: [{ sender: 'USER', text: 'Хочу партнёрство', createdAt: new Date().toISOString() }],
             clientContext: { stage: 'OFFER' },
+            mode: 'fallback',
         });
-        if (r.verdict !== 'NO-GO') throw new Error(`Got ${r.verdict}, expected NO-GO`);
-        if (!r.escalation?.to?.includes('roman')) throw new Error('No escalation to Roman');
+        if (!['NO-GO', 'GO_FALLBACK'].includes(r.verdict)) throw new Error(`Got ${r.verdict}`);
+        if (r.verdict === 'NO-GO' && !r.escalation?.to?.includes('roman')) throw new Error('No escalation block');
     }, results);
 
     await test('7. Idempotency — два вызова с тем же ключом', async () => {
@@ -80,6 +83,19 @@ async function run() {
         await memorySave({ agent_id: 'arthur', project_key: 'integration-test', content, kind: 'lesson' });
         const r = await memoryLoad('arthur', 'integration-test');
         if (!r.items.some((i: any) => i.content === content)) throw new Error('Round-trip failed');
+    }, results);
+
+    await test('9. skipReviewChain → GO_FALLBACK instantly (<2s)', async () => {
+        const start = Date.now();
+        const r = await review({
+            dialogueId: 't' + Date.now(),
+            draft: 'Тестовый ответ для skip-chain',
+            mode: 'fallback',
+            options: { skipReviewChain: true },
+        });
+        const elapsed = Date.now() - start;
+        if (r.verdict !== 'GO_FALLBACK') throw new Error(`Got ${r.verdict}, expected GO_FALLBACK`);
+        if (elapsed > 2000) throw new Error(`Too slow: ${elapsed}ms (expected <2000ms)`);
     }, results);
 
     console.log('=== INTEGRATION TEST RESULTS ===');

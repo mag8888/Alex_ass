@@ -162,9 +162,9 @@ export async function startListener(_page?: any) {
         // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
         // НО: voice от админа сохраняем + если есть pendingCardBrief/Full — обрабатываем consent.
         if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
-            // Delayed read для admin тоже — иначе Роман видит мгновенный read при self-test
-            const adminReadDelay = 6000 + Math.floor(Math.random() * 6000) /* 6-12s */;
-            setTimeout(() => message.markAsRead().catch(() => { }), adminReadDelay);
+            // Admin path: НЕ markAsRead в начале. Только если будем доставлять
+            // pending — markAsRead прямо перед send. Если нет — read останется
+            // непомеченным (так лучше: «не видел» лучше чем «прочитал и забил»).
             try {
                 const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
                 if (adminUser) {
@@ -184,6 +184,8 @@ export async function startListener(_page?: any) {
                         const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
                         if (!enriched.firstName && adminUser.firstName) enriched.firstName = adminUser.firstName;
                         const msgs = buildWelcomeMessages(enriched);
+                        // Mark as read прямо перед send (≤1мин до сообщения)
+                        try { await message.markAsRead(); } catch (_) { }
                         if (msgs.cardQuestions) {
                             await sendMessageToUser(adminUser.id, msgs.cardQuestions);
                             delete facts.pendingCardOwed;
@@ -230,13 +232,24 @@ export async function startListener(_page?: any) {
             return;
         }
 
-        // ── Delayed mark-as-read (Roman: instant read = surveilled feeling)
-        // Откладываем «прочитано» на 4-7 сек — синхронно с typing-индикатором
-        // на исходящем ответе. Юзер видит read tick → typing → ответ.
-        const readDelayMs = 6000 + Math.floor(Math.random() * 6000) /* 6-12s */;
-        setTimeout(() => {
-            message.markAsRead().catch(() => { });
-        }, readDelayMs);
+        // ── NO instant markAsRead (Roman 2026-05-13: «открываешь просмотр и не
+        // отвечаешь» = плохо). markAsRead откладываем до момента когда ответ
+        // готов к отправке, чтобы между «прочитано» и ответом было <1 мин.
+        //
+        // Решение fast/slow mode — здесь же. 75% fast (0-15s pre-delay),
+        // 25% slow (5-10 мин deferred). При slow проверим что message всё ещё
+        // latest USER в диалоге, иначе skip (новое сообщение пришло — старое
+        // обработает следующий handler).
+        const captureMessageId = message.id;
+        const isSlowMode = Math.random() < 0.25;
+        if (isSlowMode) {
+            const waitMs = 300_000 + Math.floor(Math.random() * 300_000);  // 5-10 min
+            console.log(`[timing] @${username} slow mode: defer ${Math.round(waitMs / 60_000)}min`);
+            await new Promise(r => setTimeout(r, waitMs));
+        } else {
+            const waitMs = Math.floor(Math.random() * 15000);  // 0-15s jitter
+            if (waitMs > 0) await new Promise(r => setTimeout(r, waitMs));
+        }
 
         // ── Save inbound message + ensure user/dialogue ─────────────────────
         const { user, dialogue } = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
@@ -469,6 +482,29 @@ export async function startListener(_page?: any) {
             }
         } catch (_) { /* brain table may not exist yet on first deploy */ }
 
+        // ── DNAI project_memory: inject lessons by detected topic ──────────
+        // Per Roman's brief: «нужно работать в связке с другими агентами и
+        // обучаться улучшать скрипты диалогов». detectTopic смотрит на USER
+        // текст (moneo / alma / wm-rules) — если попали → подтягиваем top items
+        // из shared memory Артура.
+        try {
+            const { isDnaiEnabled, detectTopic, memoryLoad } = await import('./dnaiClient');
+            if (isDnaiEnabled()) {
+                const topic = detectTopic(text);
+                if (topic) {
+                    const mem = await memoryLoad('arthur', topic);
+                    const top = (mem.items || []).slice(0, 6);
+                    if (top.length > 0) {
+                        const lines = top.map((i: any) => `- [${i.kind || 'fact'}] ${i.content}`).join('\n');
+                        allRules.push(`DNAI MEMORY (project=${topic}, ${top.length}/${mem.count} items):\n${lines}`);
+                        console.log(`[dnai-memory] @${username} topic=${topic} injected=${top.length}/${mem.count}`);
+                    }
+                }
+            }
+        } catch (e: any) {
+            console.warn('[dnai-memory] err (degraded, продолжаем без memory):', e.message);
+        }
+
         // ── Match engine: top-3 потенциальных партнёров для этого юзера ────
         try {
             const matches = await findMatches(user.id, { limit: 3, minScore: 4 });
@@ -597,7 +633,13 @@ export async function startListener(_page?: any) {
         const dnaiStartedAt = Date.now();
         try {
             const { isDnaiEnabled, review } = await import('./dnaiClient');
-            if (isDnaiEnabled()) {
+            // Canary rollout gate per TZ §2.5 — DNAI_ROLLOUT_PCT (0-100, default 100).
+            // Идемпотентный hash по dialogueId, чтобы один и тот же диалог
+            // всегда был in/out (а не флапал между сообщениями).
+            const rolloutPct = Math.max(0, Math.min(100, Number(process.env.DNAI_ROLLOUT_PCT ?? 100)));
+            const dialogBucket = (dialogue.id % 100 + 100) % 100;
+            const passesRollout = dialogBucket < rolloutPct;
+            if (isDnaiEnabled() && passesRollout) {
                 // Idempotency-Key: уникальный per (dialog, последний USER message)
                 const userMsgs = recentMessages.filter((m: any) => m.sender === 'USER');
                 const lastUserMsgId = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].id : Date.now();
@@ -611,6 +653,7 @@ export async function startListener(_page?: any) {
                         createdAt: new Date().toISOString(),
                     })),
                     clientContext: { stage: currentStage, telegramUsername: '@' + username },
+                    mode: 'fallback',  // v2.0: graceful degradation on Anthropic 429/5xx
                 }, idempKey);
                 dnaiVerdict = reviewRes.verdict;
                 dnaiRunId = reviewRes.metadata?.runId || null;
@@ -636,8 +679,12 @@ export async function startListener(_page?: any) {
                         data: { facts: factsX as any, autoReply: false },
                     }).catch(() => { });
                 } else {
-                    // GO или TWEAK — используем text из review (одобренный/исправленный)
+                    // GO / TWEAK / GO_FALLBACK — все используют review.text
+                    // GO_FALLBACK = наш draft as-is (review не работал), всё равно отправляем
                     finalReply = reviewRes.text || gptResult.reply;
+                    if (reviewRes.verdict === 'GO_FALLBACK') {
+                        console.log(`[dnai-review] GO_FALLBACK (degraded) reason=${reviewRes.metadata?.fallbackReason || '?'}`);
+                    }
                 }
             }
         } catch (e: any) {
@@ -649,6 +696,26 @@ export async function startListener(_page?: any) {
             console.log(`[Listener] DNAI NO-GO — не отправляем @${username}`);
             return;
         }
+
+        // ── Pre-send: race-check for slow mode + markAsRead RIGHT NOW ─────────
+        // Roman 2026-05-13: «после открытия сообщения не должно проходить более минуты».
+        // markAsRead делаем ТУТ — после GPT/DNAI generation, прямо перед send.
+        // typing+send занимают 5-30с → юзер видит read → typing → message ≤1 мин.
+        if (isSlowMode) {
+            // Race-check: после ожидания 5-10 мин — может пришло новое USER msg.
+            // Если да — этот handler skip, новое сообщение обработает следующий.
+            const latestUser = await prisma.message.findFirst({
+                where: { dialogueId: dialogue.id, sender: 'USER' },
+                orderBy: { id: 'desc' },
+                select: { id: true, text: true },
+            });
+            // Сравниваем по тексту т.к. id внутренний DB-id, captureMessageId — TG-msgId
+            if (latestUser && latestUser.text !== persistedText) {
+                console.log(`[timing] @${username} slow mode aborted — newer USER msg arrived during wait`);
+                return;
+            }
+        }
+        try { await message.markAsRead(); } catch (_) { /* may fail if msg gone */ }
 
         // ── Send (auto-mode) or stash as draft ──────────────────────────────
         // Roman: эмодзи-реакция ставится только когда бот реально ответил —

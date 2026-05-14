@@ -195,6 +195,27 @@ export async function runDailyAnalyzer(): Promise<AnalyzerRunResult> {
                 },
             });
             saved++;
+
+            // ── DNAI shared memory: push lesson так чтоб Артур/Марк/Аида
+            //    тоже видели накопленные знания нашей стороны. Best-effort,
+            //    не блокируем если DNAI лежит. project_key по stage чтобы
+            //    другие проекты не смешивались.
+            try {
+                const { isDnaiEnabled, memorySave } = await import('./dnaiClient');
+                if (isDnaiEnabled()) {
+                    const projectKey = `aiass-${p.stage.toLowerCase()}`;
+                    const content = `[${p.stage}] WHEN: ${p.trigger}\nRECOMMEND: ${p.recommend}${p.avoid ? `\nAVOID: ${p.avoid}` : ''}`;
+                    await memorySave({
+                        agent_id: 'arthur',
+                        project_key: projectKey,
+                        content: content.slice(0, 2000),
+                        kind: 'scenario',
+                    });
+                    console.log(`[dnai-memory-save] pushed lesson to ${projectKey}`);
+                }
+            } catch (e: any) {
+                console.warn('[dnai-memory-save] err (non-blocking):', e.message);
+            }
         }
 
         await notifyAdmin(

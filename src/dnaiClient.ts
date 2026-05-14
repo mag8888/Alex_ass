@@ -63,7 +63,8 @@ async function request(path: string, init: RequestInit = {}, timeoutMs?: number)
 
 // ── Types ─────────────────────────────────────────────────────────────────
 
-export type ReviewVerdict = 'GO' | 'TWEAK' | 'NO-GO';
+// v2.0: added GO_FALLBACK verdict for graceful degradation when Anthropic fails
+export type ReviewVerdict = 'GO' | 'TWEAK' | 'NO-GO' | 'GO_FALLBACK';
 
 export interface ReviewRequest {
     dialogueId: string;
@@ -71,6 +72,7 @@ export interface ReviewRequest {
     intent?: string;
     recentMessages?: Array<{ sender: 'USER' | 'OPERATOR'; text: string; createdAt: string }>;
     clientContext?: { stage?: string; telegramUsername?: string; leadScore?: number };
+    mode?: 'strict' | 'fallback';   // v2.0: fallback returns GO_FALLBACK on Anthropic errors
     options?: { skipReviewChain?: boolean; timeout?: number };
 }
 
@@ -80,8 +82,10 @@ export interface ReviewResponse {
     reason: string;
     metadata: {
         reviewedBy: string[];
-        runId: string;
-        steps?: Array<{ step: string; agent_id: string; length?: number }>;
+        runId: string | null;
+        fallback?: boolean;
+        fallbackReason?: string;
+        steps?: Array<{ step: string; agent_id: string | null; length?: number }>;
     };
     escalation?: { to: string; reason: string };
 }
@@ -101,6 +105,13 @@ export async function ping(): Promise<{ status: string; service?: string; versio
     return request('/api/integration/ping', { method: 'GET' }, 8000);
 }
 
+/**
+ * v2.0: default mode=fallback per SETUP-aiass-final.md.
+ * Configurable via DNAI_REVIEW_MODE env (strict | fallback).
+ */
+const DEFAULT_MODE: 'strict' | 'fallback' =
+    (process.env.DNAI_REVIEW_MODE as 'strict' | 'fallback') || 'fallback';
+
 export async function review(req: ReviewRequest, idempotencyKey?: string): Promise<ReviewResponse> {
     const agentId = 'arthur';
     const extraHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
@@ -114,6 +125,7 @@ export async function review(req: ReviewRequest, idempotencyKey?: string): Promi
             intent: req.intent,
             recentMessages: req.recentMessages || [],
             clientContext: req.clientContext || {},
+            mode: req.mode || DEFAULT_MODE,
             options: req.options || {},
         }),
     }, req.options?.timeout ?? TIMEOUT_MS);

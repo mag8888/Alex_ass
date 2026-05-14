@@ -12,9 +12,17 @@ Add Railway env vars (AI_ASS service → Variables):
 DNAI_STUDIO_API_KEY=<64-hex-key-from-Roman>
 DNAI_BASE_URL=https://dnai.up.railway.app   # уже default
 DNAI_INTEGRATION_ENABLED=true                # по умолчанию ENABLED если есть key
+DNAI_REVIEW_MODE=fallback                    # v2.0: fallback | strict (default fallback)
+DNAI_STUDIO_TIMEOUT_MS=35000                 # default 35s per TZ
+DNAI_ROLLOUT_PCT=100                         # 0-100 — % входящих, идущих через review (canary)
 ```
 
 Per TZ §2.5: `enabled by default UNLESS explicitly set to "false"`. No key = effectively disabled.
+
+### v2.0 — режимы review
+
+- **`fallback`** (default per SETUP-aiass-final.md): если Anthropic вылетает (429 / 5xx / timeout), DNAI возвращает `verdict='GO_FALLBACK'` с нашим draft as-is — продолжаем работать автономно, юзер не блокируется.
+- **`strict`**: при ошибке Anthropic DNAI возвращает 5xx — мы падаем в legacy flow (тоже отправляем наш draft, но без отметки fallback).
 
 ## Что происходит при включении
 
@@ -24,7 +32,8 @@ Per TZ §2.5: `enabled by default UNLESS explicitly set to "false"`. No key = ef
    - `GO` → отправляем `review.text` через pendingSends (auto-fire 30s)
    - `TWEAK` → отправляем `review.text` (уже исправленный)
    - `NO-GO` → НЕ отправляем, notifyAdmin Роману, маркируем `facts.awaitingHumanSince`, autoReply=false
-4. **Fallback at error**: если DNAI 5xx/timeout — отправляем НАШ draft (legacy flow), не блокируем юзера
+   - `GO_FALLBACK` (v2.0) → DNAI side не смог завершить chain (Anthropic 429 / timeout) → `review.text` = наш draft as-is, отправляем как обычно. В логе помечаем `fallback=true`
+4. **Fallback at error**: если DNAI сам 5xx/timeout/network — отправляем НАШ draft (legacy flow), не блокируем юзера
 
 ## Что отключить если что
 
@@ -52,12 +61,14 @@ curl https://aiass-production.up.railway.app/admin/dnai/smoke | jq .
 # }
 ```
 
-Acceptance tests (8 штук per TZ §5):
+Acceptance tests (9 штук per TZ §5 + v2.0 skipReviewChain):
 
 ```bash
 DNAI_STUDIO_API_KEY=<key> npx tsx scripts/dnai-integration-test.ts
-# Expected: 8/8 passed
+# Expected: 9/9 passed
 ```
+
+Тест №9 проверяет v2.0 `skipReviewChain: true` — мгновенный возврат `GO_FALLBACK` (<2s) без обращения к Anthropic. Полезно для канарейки и health-probe.
 
 ## Endpoint shipping summary (наша сторона)
 
@@ -116,12 +127,15 @@ Sync-call раз в неделю — сравниваем графики.
 
 ## Деливераблы (per TZ §1)
 
-- [x] DnaiStudioClient — `src/dnaiClient.ts`
-- [x] Hook в обработке входящего — `src/listener.ts` (review middleware)
+- [x] DnaiStudioClient — `src/dnaiClient.ts` (v2.0: `mode`, `GO_FALLBACK`, `runId: string|null`)
+- [x] Hook в обработке входящего — `src/listener.ts` (review middleware с `mode: 'fallback'`)
 - [x] NO-GO handler — notifyAdmin + facts.awaitingHumanSince + autoReply=false
-- [ ] memoryLoad hook в начале (TODO — добавить когда DNAI backend будет жив, чтобы можно было тестировать)
+- [x] GO_FALLBACK handler (v2.0) — log `fallback=true`, отправляем `review.text` (= наш draft)
+- [x] memoryLoad hook в начале диалога — `detectTopic(userText)` + inject в gpt.ts kbItems
 - [x] Idempotency-Key — `msg-<dialogId>-<lastUserMsgId>` (per-message dedup)
 - [x] Feature flag — `DNAI_INTEGRATION_ENABLED`
-- [x] Telemetry — console.log `[dnai-review] verdict=X runId=Y latencyMs=Z`
+- [x] Rollout gate — `DNAI_ROLLOUT_PCT` (0-100, canary)
+- [x] Telemetry — console.log `[dnai-review] verdict=X runId=Y latencyMs=Z fallback=B`
 - [x] README — этот файл
-- [ ] 8 интеграционных тестов прогон — нужен API key (script готов: `scripts/dnai-integration-test.ts`)
+- [x] 9 интеграционных тестов — `scripts/dnai-integration-test.ts` (нужен API key для прогона)
+- [x] Humanlike timing — fast/slow mode (75/25), markAsRead ≤1min до send (per Roman 2026-05-13)
