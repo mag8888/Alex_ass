@@ -172,7 +172,11 @@ export async function runDailyAnalyzer(): Promise<AnalyzerRunResult> {
         const result = await callAI(prompt);
         if (!result) return { dialogues: dialogues.length, extracted: 0, saved: 0, error: 'AI call failed' };
 
+        // batchId — общий для всех паттернов одного прогона (для группировки в админке).
+        const batchId = `ba-${new Date().toISOString().slice(0, 10)}-${Math.random().toString(36).slice(2, 8)}`;
+
         let saved = 0;
+        let dnaiPendingPushed = 0;
         for (const p of result.patterns) {
             if (!ALLOWED_STAGES.includes(p.stage)) continue;
             if (!p.trigger || !p.recommend) continue;
@@ -191,15 +195,16 @@ export async function runDailyAnalyzer(): Promise<AnalyzerRunResult> {
                     avoid: (p.avoid || null)?.slice(0, 500),
                     source: 'auto_analyzer',
                     isActive: false, // Operator must approve before bot uses it
-                    notes: `Generated from ${dialogues.length} dialogues window=${ANALYZE_WINDOW_DAYS}d`,
+                    notes: `Generated from ${dialogues.length} dialogues window=${ANALYZE_WINDOW_DAYS}d batchId=${batchId}`,
                 },
             });
             saved++;
 
-            // ── DNAI shared memory: push lesson так чтоб Артур/Марк/Аида
-            //    тоже видели накопленные знания нашей стороны. Best-effort,
-            //    не блокируем если DNAI лежит. project_key по stage чтобы
-            //    другие проекты не смешивались.
+            // ── DNAI shared memory (v1.1, TZ-aiass-brain-analyzer-approval) ──
+            // Пушим со status='pending' — паттерн уходит в admin UI на approval,
+            // Артур не видит его в memoryLoad до явного одобрения.
+            // source_meta содержит batchId + confidence + сэмплы — оператор
+            // видит контекст при просмотре карточки.
             try {
                 const { isDnaiEnabled, memorySave } = await import('./dnaiClient');
                 if (isDnaiEnabled()) {
@@ -210,16 +215,32 @@ export async function runDailyAnalyzer(): Promise<AnalyzerRunResult> {
                         project_key: projectKey,
                         content: content.slice(0, 2000),
                         kind: 'scenario',
+                        status: 'pending',
+                        submitted_by: 'brain-analyzer@aiass',
+                        source_meta: {
+                            batchId,
+                            stage: p.stage,
+                            dialogsAnalyzed: dialogues.length,
+                            windowDays: ANALYZE_WINDOW_DAYS,
+                        },
                     });
-                    console.log(`[dnai-memory-save] pushed lesson to ${projectKey}`);
+                    dnaiPendingPushed++;
+                    console.log(`[dnai-memory-save] pushed PENDING pattern to ${projectKey} (batchId=${batchId})`);
                 }
             } catch (e: any) {
                 console.warn('[dnai-memory-save] err (non-blocking):', e.message);
             }
         }
 
+        // Telegram-уведомление с deeplink в админку DNAI (per TZ §4 step 3).
+        const dnaiAdminUrl = process.env.DNAI_ADMIN_URL || 'https://dnai.up.railway.app';
         await notifyAdmin(
-            `🧠 Brain Analyzer: проанализировал ${dialogues.length} диалогов, извлёк ${result.patterns.length} паттернов, сохранил ${saved} новых (нужна твоя проверка в админке).`
+            `🧠 Brain Analyzer: проанализировал ${dialogues.length} диалогов, ` +
+            `извлёк ${result.patterns.length} паттернов, сохранил ${saved} новых.\n\n` +
+            (dnaiPendingPushed > 0
+                ? `📥 ${dnaiPendingPushed} паттерн(ов) на approval в DNAI:\n${dnaiAdminUrl} (раздел Артур → 📥 Паттерны)\n\n`
+                : '') +
+            `batchId: ${batchId}`
         );
 
         return { dialogues: dialogues.length, extracted: result.patterns.length, saved };

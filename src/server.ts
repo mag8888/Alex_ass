@@ -607,6 +607,16 @@ fastify.get('/admin/dnai/smoke', async (req, reply) => {
     }
 });
 
+// In-process DNAI health — circuit state, последний probe, recommendations
+fastify.get('/admin/dnai/health', async (req, reply) => {
+    try {
+        const { getDnaiHealth } = await import('./dnaiClient');
+        return getDnaiHealth();
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 fastify.get('/agent/health', async () => ({
     status: 'ok',
     version: '1.0.0',
@@ -2441,6 +2451,13 @@ const start = async () => {
             try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
             try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
             try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
+            // DNAI proactive health probe (60s per TZ §5) — обновляет
+            // circuit-state, чтобы listener в реальном времени знал когда
+            // Аида недоступна и работал автономно с локальным контекстом.
+            try {
+                const { startDnaiHealthProbe } = await import('./dnaiClient');
+                startDnaiHealthProbe();
+            } catch (e) { console.error('[STARTUP] dnai health probe failed:', e); }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {

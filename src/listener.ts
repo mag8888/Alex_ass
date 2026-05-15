@@ -669,14 +669,23 @@ export async function startListener(_page?: any) {
         let dnaiRunId: string | null = null;
         const dnaiStartedAt = Date.now();
         try {
-            const { isDnaiEnabled, review } = await import('./dnaiClient');
+            const { isDnaiEnabled, review, getDnaiHealth } = await import('./dnaiClient');
             // Canary rollout gate per TZ §2.5 — DNAI_ROLLOUT_PCT (0-100, default 100).
             // Идемпотентный hash по dialogueId, чтобы один и тот же диалог
             // всегда был in/out (а не флапал между сообщениями).
             const rolloutPct = Math.max(0, Math.min(100, Number(process.env.DNAI_ROLLOUT_PCT ?? 100)));
             const dialogBucket = (dialogue.id % 100 + 100) % 100;
             const passesRollout = dialogBucket < rolloutPct;
-            if (isDnaiEnabled() && passesRollout) {
+            // Circuit breaker (Roman 2026-05-15): если Аида не отвечает (N подряд
+            // ошибок ИЛИ DNAI сама сообщила circuitOpen) — НЕ дёргаем review,
+            // отправляем наш draft (он уже с полным контекстом: history + KB +
+            // Match + memoryLoad из кэша). Это и есть «работать самостоятельно
+            // поддерживая контекст диалога».
+            const dnaiHealth = getDnaiHealth();
+            if (isDnaiEnabled() && passesRollout && !dnaiHealth.available) {
+                console.log(`[dnai-review] @${username} skipped — circuit open (consecutiveFailures=${dnaiHealth.consecutiveFailures}, upstream=${dnaiHealth.upstreamCircuitOpen}) → autonomous mode`);
+            }
+            if (isDnaiEnabled() && passesRollout && dnaiHealth.available) {
                 // Idempotency-Key: уникальный per (dialog, последний USER message)
                 const userMsgs = recentMessages.filter((m: any) => m.sender === 'USER');
                 const lastUserMsgId = userMsgs.length > 0 ? userMsgs[userMsgs.length - 1].id : Date.now();

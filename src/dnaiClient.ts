@@ -105,8 +105,122 @@ export interface MemoryItem {
 
 // ── API methods ───────────────────────────────────────────────────────────
 
-export async function ping(): Promise<{ status: string; service?: string; version?: string; serverTime?: string; capabilities?: any }> {
+export async function ping(): Promise<{ status: string; service?: string; version?: string; serverTime?: string; capabilities?: any; health?: { reviewAvailable?: boolean; circuitOpen?: boolean; recentAnthropicFailures?: number; recommendation?: string } }> {
     return request('/api/integration/ping', { method: 'GET' }, 8000);
+}
+
+// ── In-process health tracker (Roman 2026-05-15) ──────────────────────────
+// «работать под кураторством Аиды, но если она не отвечает — самостоятельно
+// поддерживая контекст диалога». Решение:
+//   - проактивный ping каждые 60с (startDnaiHealthProbe)
+//   - циркуитбрейкер: при N последовательных fail'ах review мы НЕ дёргаем
+//     /review для следующих диалогов, fallback к локальному draft с полным
+//     контекстом (Match/KB/history/memoryLoad-cache)
+//   - DNAI сама возвращает health.circuitOpen в ping → если true, мы тоже
+//     уходим в autonomous mode (нет смысла даже пытаться)
+//   - circuit auto-resets когда ping снова показывает reviewAvailable=true
+
+interface DnaiHealthState {
+    available: boolean;            // можно ли дёргать review
+    circuitOpen: boolean;          // мы сами закрыли цепь после серии ошибок
+    upstreamCircuitOpen: boolean;  // DNAI сама сообщила что circuit open
+    lastPingAt: number | null;
+    lastPingOk: boolean | null;
+    consecutiveFailures: number;
+    recentAnthropicFailures: number;
+    nextRetryAt: number | null;    // когда снова попробуем review (cooldown)
+    recommendation: string | null;
+}
+
+const FAIL_THRESHOLD = Number(process.env.DNAI_CIRCUIT_FAIL_THRESHOLD || 3);
+const COOLDOWN_MS = Number(process.env.DNAI_CIRCUIT_COOLDOWN_MS || 60_000);
+
+const health: DnaiHealthState = {
+    available: true,
+    circuitOpen: false,
+    upstreamCircuitOpen: false,
+    lastPingAt: null,
+    lastPingOk: null,
+    consecutiveFailures: 0,
+    recentAnthropicFailures: 0,
+    nextRetryAt: null,
+    recommendation: null,
+};
+
+export function getDnaiHealth(): Readonly<DnaiHealthState> {
+    // Auto-reset circuit if cooldown elapsed
+    if (health.circuitOpen && health.nextRetryAt && Date.now() >= health.nextRetryAt) {
+        health.circuitOpen = false;
+        health.nextRetryAt = null;
+        console.log('[dnai-health] circuit auto-reset (cooldown elapsed)');
+    }
+    health.available = !!API_KEY && !health.circuitOpen && !health.upstreamCircuitOpen;
+    return health;
+}
+
+export function recordDnaiSuccess(): void {
+    if (health.consecutiveFailures > 0) {
+        console.log(`[dnai-health] recovery: success after ${health.consecutiveFailures} failures`);
+    }
+    health.consecutiveFailures = 0;
+    health.circuitOpen = false;
+    health.nextRetryAt = null;
+}
+
+export function recordDnaiFailure(reason: string): void {
+    health.consecutiveFailures++;
+    if (/anthropic|rate.?limit|429/i.test(reason)) {
+        health.recentAnthropicFailures++;
+    }
+    if (health.consecutiveFailures >= FAIL_THRESHOLD && !health.circuitOpen) {
+        health.circuitOpen = true;
+        health.nextRetryAt = Date.now() + COOLDOWN_MS;
+        console.warn(`[dnai-health] CIRCUIT OPEN after ${health.consecutiveFailures} failures, cooldown ${COOLDOWN_MS}ms — autonomous mode`);
+    }
+}
+
+/** Proactive 60s probe per TZ §5. Updates health state from DNAI ping response. */
+export async function pingAndUpdate(): Promise<void> {
+    if (!API_KEY) return;
+    try {
+        const r: any = await ping();
+        health.lastPingAt = Date.now();
+        health.lastPingOk = true;
+        health.upstreamCircuitOpen = !!r.health?.circuitOpen;
+        health.recentAnthropicFailures = r.health?.recentAnthropicFailures ?? 0;
+        health.recommendation = r.health?.recommendation ?? null;
+        if (r.health?.reviewAvailable === false) {
+            console.warn(`[dnai-health] upstream reports reviewAvailable=false: ${health.recommendation || 'no reason'}`);
+        }
+        // Если DNAI здорова — снимаем наш local circuit
+        if (r.health?.reviewAvailable !== false && !health.upstreamCircuitOpen) {
+            recordDnaiSuccess();
+        }
+    } catch (e: any) {
+        health.lastPingAt = Date.now();
+        health.lastPingOk = false;
+        recordDnaiFailure(`ping: ${e.message}`);
+    }
+}
+
+let probeHandle: NodeJS.Timeout | null = null;
+
+/** Запуск проактивного health-probe cron (60s по умолчанию). */
+export function startDnaiHealthProbe(): void {
+    if (probeHandle) return;
+    if (!API_KEY) {
+        console.log('[dnai-health] probe disabled: no API key');
+        return;
+    }
+    const intervalMs = Number(process.env.DNAI_PROBE_INTERVAL_MS || 60_000);
+    console.log(`[dnai-health] starting probe every ${intervalMs}ms`);
+    // Первый probe сразу
+    pingAndUpdate().catch(() => { });
+    probeHandle = setInterval(() => pingAndUpdate().catch(() => { }), intervalMs);
+}
+
+export function stopDnaiHealthProbe(): void {
+    if (probeHandle) { clearInterval(probeHandle); probeHandle = null; }
 }
 
 /**
@@ -120,19 +234,35 @@ export async function review(req: ReviewRequest, idempotencyKey?: string): Promi
     const agentId = 'arthur';
     const extraHeaders: Record<string, string> = { 'Content-Type': 'application/json' };
     if (idempotencyKey) extraHeaders['Idempotency-Key'] = idempotencyKey;
-    return request(`/api/agents/${agentId}/review`, {
-        method: 'POST',
-        headers: extraHeaders,
-        body: JSON.stringify({
-            dialogueId: req.dialogueId,
-            draft: req.draft,
-            intent: req.intent,
-            recentMessages: req.recentMessages || [],
-            clientContext: req.clientContext || {},
-            mode: req.mode || DEFAULT_MODE,
-            options: req.options || {},
-        }),
-    }, req.options?.timeout ?? TIMEOUT_MS);
+    try {
+        const res = await request(`/api/agents/${agentId}/review`, {
+            method: 'POST',
+            headers: extraHeaders,
+            body: JSON.stringify({
+                dialogueId: req.dialogueId,
+                draft: req.draft,
+                intent: req.intent,
+                recentMessages: req.recentMessages || [],
+                clientContext: req.clientContext || {},
+                mode: req.mode || DEFAULT_MODE,
+                options: req.options || {},
+            }),
+        }, req.options?.timeout ?? TIMEOUT_MS) as ReviewResponse;
+        // GO_FALLBACK = DNAI сама deграднула (Anthropic 429/5xx). Network OK, но
+        // chain не отработал — считаем это «частичным успехом», не открываем
+        // наш circuit, но логируем как Anthropic failure для метрики.
+        if (res.verdict === 'GO_FALLBACK') {
+            health.recentAnthropicFailures++;
+            // не recordDnaiFailure — DNAI работает, просто Anthropic троттлит.
+            // Идемпотентность и runId всё равно валидны.
+        } else {
+            recordDnaiSuccess();
+        }
+        return res;
+    } catch (e: any) {
+        recordDnaiFailure(`review: ${e.message}`);
+        throw e;
+    }
 }
 
 /**
@@ -156,12 +286,38 @@ export async function memoryProjects(agentId: string): Promise<{ projects: Array
     return request(`/api/memory/projects?agent_id=${encodeURIComponent(agentId)}`, { method: 'GET' });
 }
 
-export async function memorySave(req: { agent_id: string; project_key: string; content: string; kind?: MemoryItem['kind'] }): Promise<{ ok: boolean; id: number; created_at: string }> {
+// v1.1 (TZ-aiass-brain-analyzer-approval): добавлены status/submitted_by/source_meta.
+// Старая сигнатура остаётся back-compat: если status не указан — DNAI default = 'approved'
+// (запись сразу в активную память Артура). Brain Analyzer должен слать 'pending'.
+export type MemoryStatus = 'approved' | 'pending' | 'rejected';
+
+export interface MemorySaveRequest {
+    agent_id: string;
+    project_key: string;
+    content: string;
+    kind?: MemoryItem['kind'];
+    status?: MemoryStatus;
+    submitted_by?: string;
+    source_meta?: Record<string, any>;
+}
+
+export async function memorySave(req: MemorySaveRequest): Promise<{ ok: boolean; id: number; status?: MemoryStatus; created_at: string }> {
     return request('/api/memory/save', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify(req),
     });
+}
+
+// GET /api/memory/pending — список паттернов на approval (для health-dashboards).
+export interface PendingMemoryItem extends MemoryItem {
+    submitted_by?: string;
+    source_meta?: Record<string, any>;
+    status?: MemoryStatus;
+}
+
+export async function memoryPending(): Promise<{ items: PendingMemoryItem[]; count: number }> {
+    return request('/api/memory/pending', { method: 'GET' });
 }
 
 // ── Smoke test: all 4 capabilities + ping ─────────────────────────────────
