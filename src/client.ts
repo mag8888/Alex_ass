@@ -20,31 +20,44 @@ export function getQR() {
     return currentQR;
 }
 
+// Валидная GramJS StringSession начинается с версии-байта "1" и достаточно
+// длинная. Это отсекает битые/чужие/обрезанные значения (например когда
+// репо копируется для второго бота, или env вставлен с искажением) — иначе
+// new StringSession(badValue) кидает "Not a valid string" и краш на старте.
+function looksLikeSession(s: string): boolean {
+    return s.length > 100 && s.startsWith("1");
+}
+
 function loadSessionString(): string {
-    // 1) File on volume — preferred so saved session survives redeploys
+    const fromEnv = (process.env.TELEGRAM_SESSION || "").trim();
+
+    // 1) File on volume — preferred so saved session survives redeploys,
+    //    НО только если содержимое похоже на валидную сессию.
     try {
         if (fs.existsSync(SESSION_FILE)) {
             const fromFile = fs.readFileSync(SESSION_FILE, "utf8").trim();
-            if (fromFile.length > 10) {
+            if (looksLikeSession(fromFile)) {
                 console.log(`[client] Loaded session from ${SESSION_FILE} (${fromFile.length} chars)`);
                 return fromFile;
             }
-            console.log(`[client] ${SESSION_FILE} exists but is empty/short — falling back to env`);
+            console.log(`[client] ${SESSION_FILE} invalid/short (${fromFile.length} chars, starts '${fromFile[0] || ''}') — игнорирую, беру env`);
         }
     } catch (e: any) {
         console.warn(`[client] Could not read ${SESSION_FILE}:`, e.message);
     }
 
-    // 2) Env variable (set on Railway after first successful QR login)
-    const fromEnv = (process.env.TELEGRAM_SESSION || "").trim();
-    if (fromEnv.length > 10) {
+    // 2) Env variable (set on Railway). Authoritative если файл невалиден.
+    if (looksLikeSession(fromEnv)) {
         console.log(`[client] Loaded session from TELEGRAM_SESSION env (${fromEnv.length} chars)`);
-        // Persist to file so subsequent restarts skip the env path
+        // Persist валидную сессию в файл (перезатирает битую, если была)
         try { fs.writeFileSync(SESSION_FILE, fromEnv); } catch (_) { }
         return fromEnv;
     }
+    if (fromEnv.length > 0) {
+        console.warn(`[client] TELEGRAM_SESSION env есть, но не похож на сессию (${fromEnv.length} chars, starts '${fromEnv[0]}') — пропускаю`);
+    }
 
-    console.log(`[client] No session found — QR login required`);
+    console.log(`[client] No valid session found — QR login required`);
     return "";
 }
 
