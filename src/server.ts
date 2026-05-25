@@ -6,6 +6,7 @@ import path from 'path';
 import fastifyStatic from '@fastify/static';
 import fastifyCors from '@fastify/cors';
 import prisma from './db';
+import { persona } from './persona';
 import { initClient, getClient, reconnectClient, getQR } from './client';
 import { sendMessageToUser, sendDraftMessage, scanChatForLeads, ensureUserAndDialogue, saveMessageToDb, createDraftMessage, sendReplyInChat, sendScoutDM } from './actions';
 import { generateResponse, analyzeText } from './gpt';
@@ -2440,24 +2441,54 @@ const start = async () => {
             await prisma.$connect();
             console.log('[STARTUP] Database connected.');
 
+            // ── Idempotent boot-guard: гарантируем что колонка Dialogue.botId
+            //    существует ДО любых запросов (мультибот-режим). Безопасно:
+            //    ADD COLUMN IF NOT EXISTS — no-op если уже есть, не зависит от
+            //    истории миграций, ничего не ломает у текущего Артура.
+            try {
+                await prisma.$executeRawUnsafe(
+                    `ALTER TABLE "Dialogue" ADD COLUMN IF NOT EXISTS "botId" TEXT NOT NULL DEFAULT 'arthur'`,
+                );
+                await prisma.$executeRawUnsafe(
+                    `CREATE INDEX IF NOT EXISTS "Dialogue_botId_idx" ON "Dialogue" ("botId")`,
+                );
+                await prisma.$executeRawUnsafe(
+                    `CREATE INDEX IF NOT EXISTS "Dialogue_userId_botId_idx" ON "Dialogue" ("userId", "botId")`,
+                );
+                console.log('[STARTUP] ✓ Dialogue.botId column ensured');
+            } catch (e: any) {
+                console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
+            }
+
             // Seed broadcast scenarios + backfill gender from names
             try { await seedScenarios(); } catch (e) { console.error('[STARTUP] seedScenarios failed:', e); }
             try { await backfillGender(); } catch (e) { console.error('[STARTUP] backfillGender failed:', e); }
-            // Start the Brain analyzer cron (runs daily at 04:00 UTC)
-            try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
-            try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
+            // pending-sends tick нужен ОБОИМ ботам (auto-fire черновиков).
             try { startPendingSendsTick(); } catch (e) { console.error('[STARTUP] pending sends tick failed:', e); }
-            try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
-            try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
-            try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
-            try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
+
+            // ── Outbound-кампании запускает только бот с runsOutreachCrons.
+            //    Алекс = личный ассистент, без массового welcome/outreach →
+            //    эти кроны у него выключены (и нет риска двойного контакта).
+            if (persona.runsOutreachCrons) {
+                try { startBrainAnalyzerCron(); } catch (e) { console.error('[STARTUP] brain cron failed:', e); }
+                try { startOutreachQueue(); } catch (e) { console.error('[STARTUP] outreach queue failed:', e); }
+                try { startNewUsersScanner(); } catch (e) { console.error('[STARTUP] new users scanner failed:', e); }
+                try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
+                try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
+                try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
+            } else {
+                console.log(`[STARTUP] persona=${persona.botId} — outbound-кроны выключены (только ответы на входящие)`);
+            }
             // DNAI proactive health probe (60s per TZ §5) — обновляет
             // circuit-state, чтобы listener в реальном времени знал когда
             // Аида недоступна и работал автономно с локальным контекстом.
-            try {
-                const { startDnaiHealthProbe } = await import('./dnaiClient');
-                startDnaiHealthProbe();
-            } catch (e) { console.error('[STARTUP] dnai health probe failed:', e); }
+            // Только для персон с включённым DNAI (Алекс пока без review).
+            if (persona.dnaiEnabled) {
+                try {
+                    const { startDnaiHealthProbe } = await import('./dnaiClient');
+                    startDnaiHealthProbe();
+                } catch (e) { console.error('[STARTUP] dnai health probe failed:', e); }
+            }
 
             // One-shot dedupe: leave only newest DRAFT per dialogue
             try {

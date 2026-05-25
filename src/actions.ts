@@ -5,6 +5,7 @@ import prisma from './db';
 import { emitEvent } from './events';
 import { notifyAdmin, notifyLeads, buildUserCard } from './notify';
 import { detectGender } from './gender';
+import { BOT_ID } from './persona';
 
 // --- DB Helpers ---
 
@@ -50,9 +51,11 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
         }
     }
 
-    // 2. Find or Create Active Dialogue
+    // 2. Find or Create Active Dialogue — scoped by botId (мультибот).
+    //    Один человек может вести ОТДЕЛЬНЫЕ диалоги с Артуром и Алексом —
+    //    их истории не смешиваются (фильтр по botId = текущая персона).
     let dialogue = await prisma.dialogue.findFirst({
-        where: { userId: user.id, status: 'ACTIVE' },
+        where: { userId: user.id, status: 'ACTIVE', botId: BOT_ID },
         orderBy: { updatedAt: 'desc' }
     });
 
@@ -61,10 +64,11 @@ export async function ensureUserAndDialogue(username: string, name: string, acce
             data: {
                 userId: user.id,
                 status: 'ACTIVE',
-                source: source // Use provided source
+                source: source, // Use provided source
+                botId: BOT_ID,
             }
         });
-        console.log(`[DB] Created new dialogue for user: ${username} (Source: ${source})`);
+        console.log(`[DB] Created new dialogue for user: ${username} (Source: ${source}, bot: ${BOT_ID})`);
     }
 
     return { user, dialogue };

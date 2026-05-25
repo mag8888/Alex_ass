@@ -13,3 +13,7 @@ debug_*.ts
 debug_*.js
 test_*.ts
 postgres_data
+
+# Second-account QR-login artifacts (НЕ коммитить — полный доступ к аккаунту)
+scripts/.session-alex.txt
+scripts/.qr-alex.png

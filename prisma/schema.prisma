@@ -126,11 +126,15 @@ model Dialogue {
   stage     DialogueStage  @default(DISCOVERY)
   source    DialogueSource @default(INBOUND)
   outcome   DialogueOutcome @default(IN_PROGRESS)
+  botId     String   @default("arthur")  // какой бот ведёт диалог (persona BOT_ID)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
   messages   Message[]
   scoutLeads ScoutLead[]
+
+  @@index([botId])
+  @@index([userId, botId])
 }
 
 enum DialogueOutcome {

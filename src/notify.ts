@@ -3,8 +3,15 @@ import { Api } from 'telegram';
 import type { User } from '@prisma/client';
 import type { WMUser } from './wmClient';
 import { detectGender } from './gender';
+import { persona } from './persona';
 
-const ADMIN_USERNAME = process.env.ADMIN_USERNAME || 'roman_arctur';
+// Куда летят админ-уведомления для ТЕКУЩЕГО бота (persona-зависимо).
+// arthur → [roman]; alex → [roman, alex] (когда задан ALEX_ADMIN_USERNAME).
+// Fallback на env ADMIN_USERNAME для обратной совместимости.
+const ADMIN_TARGETS: string[] = persona.adminTargets.length
+    ? persona.adminTargets
+    : [(process.env.ADMIN_USERNAME || 'roman_arctur').replace(/^@/, '')];
+const ADMIN_USERNAME = ADMIN_TARGETS[0];
 // Where lead-related notifications go. Accepts:
 //   - Public username (e.g. "wave_leads")
 //   - Numeric channel ID (e.g. "-1002145678900")
@@ -39,11 +46,14 @@ export async function notifyAdmin(text: string, opts: { rateLimitKey?: string; s
         return;
     }
 
-    try {
-        await client.sendMessage(ADMIN_USERNAME, { message: text, silent: opts.silent });
-        console.log(`[notify] Sent to @${ADMIN_USERNAME}: ${text.substring(0, 60)}...`);
-    } catch (e: any) {
-        console.error(`[notify] Failed to deliver to @${ADMIN_USERNAME}:`, e.message);
+    // Шлём всем admin-таргетам персоны (arthur=1, alex=Роман+Алекс).
+    for (const target of ADMIN_TARGETS) {
+        try {
+            await client.sendMessage(target, { message: text, silent: opts.silent });
+            console.log(`[notify] Sent to @${target}: ${text.substring(0, 60)}...`);
+        } catch (e: any) {
+            console.error(`[notify] Failed to deliver to @${target}:`, e.message);
+        }
     }
 }
 
