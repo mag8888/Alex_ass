@@ -40,9 +40,16 @@ export interface PersonaConfig {
 // Админ-таргеты для эскалаций.
 //   ROMAN      — Роман (@roman_arctur)
 //   ALEX_ADMIN — личный TG Алекса (@alex_hardi1, НЕ бот-аккаунт @alex_hardi8).
-//                Дефолт зашит чтобы работало без env; env переопределяет.
+//                Если env ALEX_ADMIN_USERNAME ОПРЕДЕЛЁН (даже пустой) —
+//                уважаем его буквально (пустой = убрать Алекса из эскалаций,
+//                чтоб он тестил бота как чистый клиент). Если env НЕ задан
+//                вовсе — дефолт alex_hardi1.
 const ROMAN = (process.env.ADMIN_USERNAME || 'roman_arctur').replace(/^@/, '');
-const ALEX_ADMIN = (process.env.ALEX_ADMIN_USERNAME || 'alex_hardi1').replace(/^@/, '');
+const ALEX_ADMIN = (
+    process.env.ALEX_ADMIN_USERNAME !== undefined
+        ? process.env.ALEX_ADMIN_USERNAME
+        : 'alex_hardi1'
+).replace(/^@/, '').trim();
 
 const PERSONAS: Record<BotId, PersonaConfig> = {
     arthur: {
