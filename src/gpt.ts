@@ -319,7 +319,17 @@ function buildDynamicContext(stage: DialogueStage, user: User, instructions?: st
         ? PROFILE_FIELDS.find(f => !user[f.key as keyof User] || user[f.key as keyof User] === '')
         : null;
 
+    // Время суток по МСК — чтобы приветствие было «Доброе утро/день/вечер»
+    // корректным (раньше бот не знал времени → эхо «Привет»). Инфо-строка,
+    // безопасна для всех персон.
+    const mskHour = (new Date().getUTCHours() + 3) % 24;
+    const todGreeting = mskHour < 6 ? 'Доброй ночи'
+        : mskHour < 12 ? 'Доброе утро'
+            : mskHour < 18 ? 'Добрый день'
+                : 'Добрый вечер';
+
     let txt = `CURRENT STAGE: ${stage}
+TIME NOW (МСК): ${mskHour}:00 — если уместно приветствие, используй форму «${todGreeting}»
 
 USER PROFILE:
 - Name: ${user.firstName || 'Unknown'}
