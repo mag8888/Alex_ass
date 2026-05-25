@@ -37,10 +37,12 @@ export interface PersonaConfig {
     runsOutreachCrons: boolean;
 }
 
-// Алекс-админ для эскалаций — личный TG Алекса. Заполнить когда Роман пришлёт.
-// Пока fallback: эскалации Алекса идут только Роману.
+// Админ-таргеты для эскалаций.
+//   ROMAN      — Роман (@roman_arctur)
+//   ALEX_ADMIN — личный TG Алекса (@alex_hardi1, НЕ бот-аккаунт @alex_hardi8).
+//                Дефолт зашит чтобы работало без env; env переопределяет.
 const ROMAN = (process.env.ADMIN_USERNAME || 'roman_arctur').replace(/^@/, '');
-const ALEX_ADMIN = (process.env.ALEX_ADMIN_USERNAME || '').replace(/^@/, '');
+const ALEX_ADMIN = (process.env.ALEX_ADMIN_USERNAME || 'alex_hardi1').replace(/^@/, '');
 
 const PERSONAS: Record<BotId, PersonaConfig> = {
     arthur: {
