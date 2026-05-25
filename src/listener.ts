@@ -243,7 +243,9 @@ export async function startListener(_page?: any) {
         // обработает следующий handler).
         const captureMessageId = message.id;
         let needRaceCheck = false;  // any path that does long defer must set this
-        const isSlowMode = Math.random() < 0.25;
+        // Slow-mode (5-10мин defer) только у персон с humanlikeSlowMode
+        // (Артур). Алекс = личный ассистент, отвечает быстро (только jitter).
+        const isSlowMode = persona.humanlikeSlowMode && Math.random() < 0.25;
         if (isSlowMode) needRaceCheck = true;
         if (isSlowMode) {
             const waitMs = 300_000 + Math.floor(Math.random() * 300_000);  // 5-10 min

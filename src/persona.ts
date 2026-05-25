@@ -35,6 +35,12 @@ export interface PersonaConfig {
      * контакта одного человека обоими ботами.
      */
     runsOutreachCrons: boolean;
+    /**
+     * 25% «slow mode» (defer ответа на 5-10 мин, имитация «занят»).
+     * arthur — да (холодный аутрич, реалистично). alex — нет (личный
+     * ассистент должен отвечать быстро; остаётся только fast-jitter 0-15с).
+     */
+    humanlikeSlowMode: boolean;
 }
 
 // Админ-таргеты для эскалаций.
@@ -59,6 +65,7 @@ const PERSONAS: Record<BotId, PersonaConfig> = {
         adminTargets: [ROMAN],
         dnaiEnabled: true,
         runsOutreachCrons: true,
+        humanlikeSlowMode: true,
     },
     alex: {
         botId: 'alex',
@@ -83,6 +90,7 @@ const PERSONAS: Record<BotId, PersonaConfig> = {
         adminTargets: ALEX_ADMIN ? [ROMAN, ALEX_ADMIN] : [ROMAN],
         dnaiEnabled: false,         // пока без DNAI review
         runsOutreachCrons: false,   // личный ассистент — без массовых кампаний
+        humanlikeSlowMode: false,   // отвечает быстро (без 5-10мин defer)
     },
 };
 
