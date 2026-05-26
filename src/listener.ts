@@ -27,7 +27,8 @@ import { fetchExternalContext, formatForPrompt as formatExternalContext, detectC
 import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt, detectPartnerNeed, buildPartnerPivotPrompt } from './efir';
 import { detectSalesSignal, buildProductSalesPrompt } from './products';
 import { detectLiveHumanRequest, getFreeSlots, createMeeting, buildBookingPrompt, fmtMsk } from './booking';
-import { getPending, removePending, latestPending, classifyReaction, executeApprovalSend } from './approvals';
+import { getPending, removePending, latestPending, classifyReaction, executeApprovalSend, sendDraftForApproval } from './approvals';
+import { decodeQrFromJpeg, extractTgContact } from './qr';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -208,6 +209,34 @@ export async function startListener(_page?: any) {
                     adminUser = ensured.user;
                 }
                 if (adminUser) {
+                    // ── Фото-QR от админа: декод контакта → эфир-шаблон на согласование ──
+                    const isPhoto = !!(message.photo || message.media?.className === 'MessageMediaPhoto');
+                    if (isPhoto) {
+                        try { await message.markAsRead(); } catch (_) { }
+                        try {
+                            const buf = await client.downloadMedia(message);
+                            const qr = (buf && Buffer.isBuffer(buf)) ? decodeQrFromJpeg(buf) : null;
+                            const contact = qr ? extractTgContact(qr) : null;
+                            if (contact?.username) {
+                                const tpl = [
+                                    'Добрый день! Пишу от Романа — Вы с ним общались по поводу эфира.',
+                                    'В четверг, 28-го, проводим эфир по внедрению ИИ в бизнес: реальные кейсы, ИИ-сотрудники, разбор бизнесов участников вживую. Начало в 12:00 МСК.',
+                                    'Зафиксировать Вас? Утром напомню и за 15 минут до начала пришлю ссылку на подключение.',
+                                ].join('\n\n');
+                                await sendDraftForApproval({
+                                    adminUsername: username.replace(/^@/, ''),
+                                    targetUsername: contact.username, targetFirstName: '',
+                                    text: tpl, botId: persona.botId, registerEfir: true,
+                                });
+                                console.log(`[qr] декодирован @${contact.username} → черновик на согласование`);
+                            } else {
+                                await notifyAdmin(`Не смог распознать QR${qr ? ' (не Telegram-контакт)' : ''}. Пришли @username текстом — сделаю шаблон.`, { rateLimitKey: 'qr-fail' });
+                                console.log(`[qr] декод не удался (qr=${qr ? 'есть, но не TG' : 'не прочитан'})`);
+                            }
+                        } catch (e: any) { console.warn('[qr] handler err:', e.message); }
+                        return;
+                    }
+
                     // ── Фолбэк согласования: Роман ответил ⚡/💩 сообщением ──
                     // (на случай если реакция не долетела). Берём последний
                     // pending-черновик.
