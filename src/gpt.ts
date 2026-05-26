@@ -378,6 +378,37 @@ function safeParseJSON(content: string): any | null {
     }
 }
 
+// ── Правка черновика по фидбэку админа ─────────────────────────────────────
+// Берёт исходный черновик + правку Романа/Алекса → возвращает исправленный
+// текст сообщения клиенту (только текст, без пояснений).
+export async function reviseDraft(original: string, correction: string): Promise<string | null> {
+    const sys = 'Ты редактируешь черновик сообщения клиенту. Примени правку и верни ТОЛЬКО исправленный текст сообщения — без кавычек, без пояснений, без префиксов. Сохрани стиль: на «Вы», нативно, по-человечески.';
+    const usr = `ЧЕРНОВИК:\n${original}\n\nПРАВКА:\n${correction}\n\nВерни исправленный текст:`;
+    try {
+        const a = getAnthropic();
+        if (a) {
+            const r: any = await a.messages.create({
+                model: ANTHROPIC_MODEL, max_tokens: 800,
+                system: sys, messages: [{ role: 'user', content: usr }],
+            });
+            const t = r?.content?.[0]?.text?.trim();
+            if (t) return t;
+        }
+    } catch (e: any) { console.warn('[reviseDraft] anthropic err:', e?.message); }
+    try {
+        const o = getOpenAI();
+        if (o) {
+            const r: any = await o.chat.completions.create({
+                model: OPENAI_MODEL, max_tokens: 800,
+                messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }],
+            });
+            const t = r?.choices?.[0]?.message?.content?.trim();
+            if (t) return t;
+        }
+    } catch (e: any) { console.warn('[reviseDraft] openai err:', e?.message); }
+    return null;
+}
+
 // ── Main entrypoint ──────────────────────────────────────────────────────────
 
 export async function generateResponse(

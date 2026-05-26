@@ -226,6 +226,34 @@ export async function startListener(_page?: any) {
                             return;  // обработали — выходим
                         }
                     }
+
+                    // ── Правка черновика: висит pending + админ дал фидбэк (не
+                    //    вердикт) → регенерим исправленный вариант и шлём на
+                    //    повторное согласование МГНОВЕННО (не «учту»).
+                    const pendingDraft = latestPending();
+                    if (pendingDraft && (text || '').trim().length > 2) {
+                        try { await message.markAsRead(); } catch (_) { }
+                        try {
+                            const { reviseDraft } = await import('./gpt');
+                            const revised = await reviseDraft(pendingDraft.text, text);
+                            if (revised) {
+                                removePending(pendingDraft.msgId);
+                                const { sendDraftForApproval } = await import('./approvals');
+                                await sendDraftForApproval({
+                                    adminUsername: username.replace(/^@/, ''),
+                                    targetUsername: pendingDraft.targetUsername,
+                                    targetFirstName: pendingDraft.targetFirstName,
+                                    targetAccessHash: pendingDraft.targetAccessHash,
+                                    text: revised, botId: pendingDraft.botId, registerEfir: pendingDraft.registerEfir,
+                                });
+                                console.log(`[approval] правка применена → новый черновик для @${pendingDraft.targetUsername}`);
+                            } else {
+                                await notifyAdmin('Не смог сгенерировать правку, повтори формулировку.', { rateLimitKey: `revise-fail` });
+                            }
+                        } catch (e: any) { console.warn('[approval] revise err:', e.message); }
+                        return;  // фидбэк по черновику обработан
+                    }
+
                     // Сохраняем voice-транскрипт как USER-RECEIVED, чтобы Роман видел в /dialogues/52
                     if (isVoice && text) {
                         const adminDlg = await prisma.dialogue.findFirst({ where: { userId: adminUser.id }, orderBy: { id: 'desc' } });
