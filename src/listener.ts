@@ -494,18 +494,6 @@ export async function startListener(_page?: any) {
             allRules.unshift(persona.personaPrompt);
         }
 
-        // ── Сценарий «ЭФИР» (оба бота). Только при совпадении — не раздуваем
-        //    промпт на каждом сообщении.
-        //    «анонс» → полный анонс дословно; «эфир» → нативно к записи.
-        if (detectEfir(text) || detectAnons(text)) {
-            const efir = getActiveEfir();
-            if (efir) {
-                const mode = detectAnons(text) ? 'full' : 'native';
-                allRules.push(buildEfirPrompt(efir, mode));
-                console.log(`[efir] @${username} → эфир «${efir.id}» mode=${mode}`);
-            }
-        }
-
         // ── Principle #12: auto-fetch external context (links / @handles) ──
         // If the user just shared a t.me link, channel handle, or URL — pull
         // the public content so the bot doesn't ask them to repeat themselves.
@@ -585,6 +573,24 @@ export async function startListener(_page?: any) {
             take: 12,
         });
         const history = recentMessages.reverse().map(m => ({ sender: m.sender, text: m.text }));
+
+        // ── Сценарий «ЭФИР» (оба бота). Активен если эфир упомянут в текущем
+        //    сообщении ИЛИ в недавней истории (например опенер бота завёл речь
+        //    об эфире, а юзер ответил «да/интересно» без слова «эфир»).
+        //    «анонс» → полный анонс дословно; иначе → нативно к записи.
+        {
+            const recentText = history.map(m => m.text || '').join(' \n ');
+            const efirInCurrent = detectEfir(text) || detectAnons(text);
+            const efirInHistory = detectEfir(recentText) || detectAnons(recentText);
+            if (efirInCurrent || efirInHistory) {
+                const efir = getActiveEfir();
+                if (efir) {
+                    const mode = detectAnons(text) ? 'full' : 'native';
+                    allRules.push(buildEfirPrompt(efir, mode));
+                    console.log(`[efir] @${username} → эфир «${efir.id}» mode=${mode} (current=${efirInCurrent} history=${efirInHistory})`);
+                }
+            }
+        }
 
         // ── Generate AI reply ───────────────────────────────────────────────
         console.log(`[GPT] Generating reply for @${username} (stage=${currentStage}, autoReply=${user.autoReply})`);
