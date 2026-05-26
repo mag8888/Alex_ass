@@ -32,6 +32,7 @@ export interface GPTResponse {
     nextStage: DialogueStage;
     newFacts: any;
     extractedProfile?: Partial<User>;
+    bookingSlotISO?: string;  // если клиент подтвердил слот созвона — ISO выбранного слота
 }
 
 // Profile fields collected during QUALIFICATION, in order
@@ -308,7 +309,8 @@ OUTPUT FORMAT — return ONLY valid JSON, no markdown, no commentary:
   "reply": "<your message in Russian>",
   "extractedProfile": { "city": "...", "activity": "...", "businessCard": "...", "bestClients": "...", "requests": "...", "hobbies": "...", "currentIncome": "...", "desiredIncome": "..." },
   "nextStage": "DISCOVERY|OFFER|QUALIFICATION|CLOSED",
-  "newFacts": {}
+  "newFacts": {},
+  "bookingSlotISO": "<заполняй ТОЛЬКО если клиент подтвердил конкретный слот созвона — значение iso из блока ЗАПИСЬ НА СОЗВОН; иначе опусти>"
 }
 Only include extractedProfile fields you ACTUALLY found in the user's LAST message.`;
 }

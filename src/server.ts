@@ -2535,7 +2535,25 @@ const start = async () => {
                 await prisma.$executeRawUnsafe(
                     `CREATE INDEX IF NOT EXISTS "Dialogue_userId_botId_idx" ON "Dialogue" ("userId", "botId")`,
                 );
-                console.log('[STARTUP] ✓ Dialogue.botId column ensured');
+                // Meeting table (booking созвонов) — idempotent CREATE
+                await prisma.$executeRawUnsafe(`
+                    CREATE TABLE IF NOT EXISTS "Meeting" (
+                        "id" SERIAL PRIMARY KEY,
+                        "userId" INTEGER NOT NULL,
+                        "dialogueId" INTEGER,
+                        "botId" TEXT NOT NULL DEFAULT 'arthur',
+                        "scheduledAt" TIMESTAMP(3) NOT NULL,
+                        "durationMin" INTEGER NOT NULL DEFAULT 30,
+                        "status" TEXT NOT NULL DEFAULT 'BOOKED',
+                        "clientUsername" TEXT,
+                        "clientName" TEXT,
+                        "remindedMorning" BOOLEAN NOT NULL DEFAULT false,
+                        "reminded15" BOOLEAN NOT NULL DEFAULT false,
+                        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_scheduledAt_idx" ON "Meeting" ("scheduledAt")`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_status_idx" ON "Meeting" ("status")`);
+                console.log('[STARTUP] ✓ Dialogue.botId + Meeting table ensured');
             } catch (e: any) {
                 console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
             }
@@ -2556,6 +2574,12 @@ const start = async () => {
                 try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
                 try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
                 try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
+                // Напоминания о созвонах — только на одном сервисе (arthur),
+                // видит все Meeting в общей БД, шлёт Роману (без дублей).
+                try {
+                    const { startBookingRemindersCron } = await import('./bookingReminders');
+                    startBookingRemindersCron();
+                } catch (e) { console.error('[STARTUP] booking reminders failed:', e); }
             } else {
                 console.log(`[STARTUP] persona=${persona.botId} — outbound-кроны выключены (только ответы на входящие)`);
             }

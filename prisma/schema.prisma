@@ -137,6 +137,26 @@ model Dialogue {
   @@index([userId, botId])
 }
 
+// Запись на созвон с Романом (booking). Бот бронит 30-мин слот 13-17 МСК,
+// уведомляет Романа + напоминает утром и за 15 мин.
+model Meeting {
+  id             Int      @id @default(autoincrement())
+  userId         Int
+  dialogueId     Int?
+  botId          String   @default("arthur")
+  scheduledAt    DateTime // UTC, начало слота
+  durationMin    Int      @default(30)
+  status         String   @default("BOOKED") // BOOKED | REMINDED_MORNING | REMINDED_15 | DONE | CANCELLED
+  clientUsername String?
+  clientName     String?
+  remindedMorning Boolean @default(false)
+  reminded15     Boolean  @default(false)
+  createdAt      DateTime @default(now())
+
+  @@index([scheduledAt])
+  @@index([status])
+}
+
 enum DialogueOutcome {
   IN_PROGRESS       // active conversation, not concluded yet
   DROPPED_NO_REPLY  // user never replied to our outreach

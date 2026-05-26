@@ -26,6 +26,7 @@ import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext, detectConsumableContent } from './externalContext';
 import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt, detectPartnerNeed, buildPartnerPivotPrompt } from './efir';
 import { detectSalesSignal, buildProductSalesPrompt } from './products';
+import { detectLiveHumanRequest, getFreeSlots, createMeeting, buildBookingPrompt, fmtMsk } from './booking';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -642,6 +643,15 @@ export async function startListener(_page?: any) {
                     console.log(`[product] @${username} → ИИ-ассистент sales context (postепенно к покупке)`);
                 }
             }
+
+            // Запись на созвон: хочет живого человека → предлагаем свободные слоты
+            if (detectLiveHumanRequest(text) || detectLiveHumanRequest(recentTextP)) {
+                try {
+                    const slots = await getFreeSlots(12);
+                    allRules.push(buildBookingPrompt(slots));
+                    console.log(`[booking] @${username} → live-human request, ${slots.length} слотов предложено`);
+                } catch (e: any) { console.warn('[booking] slots err:', e.message); }
+            }
         }
 
         // ── Generate AI reply ───────────────────────────────────────────────
@@ -666,6 +676,33 @@ export async function startListener(_page?: any) {
         }
 
         console.log(`[GPT] Reply: ${gptResult.reply.substring(0, 100)}`);
+
+        // ── Booking: клиент подтвердил слот созвона → бронь + уведомление ────
+        if (gptResult.bookingSlotISO) {
+            try {
+                const when = new Date(gptResult.bookingSlotISO);
+                if (!isNaN(when.getTime()) && when.getTime() > Date.now()) {
+                    const m = await createMeeting({
+                        userId: user.id,
+                        dialogueId: dialogue.id,
+                        botId: persona.botId,
+                        scheduledAtISO: gptResult.bookingSlotISO,
+                        clientUsername: username,
+                        clientName: user.firstName,
+                    });
+                    await notifyAdmin(
+                        `📅 Новая запись на созвон!\n` +
+                        `Когда: ${fmtMsk(when)} (30 мин)\n` +
+                        `Кто: ${user.firstName || ''} @${username}\n` +
+                        `Бот: ${persona.displayName} · meetingId=${m.id}`,
+                        { rateLimitKey: `booking-${m.id}` },
+                    );
+                    console.log(`[booking] @${username} забронировал ${fmtMsk(when)} (meetingId=${m.id})`);
+                } else {
+                    console.warn(`[booking] невалидный/прошедший слот: ${gptResult.bookingSlotISO}`);
+                }
+            } catch (e: any) { console.warn('[booking] create err:', e.message); }
+        }
 
         // ── Persist extracted profile + stage update ────────────────────────
         if (gptResult.extractedProfile && Object.keys(gptResult.extractedProfile).length > 0) {
