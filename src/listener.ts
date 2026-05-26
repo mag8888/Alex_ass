@@ -25,6 +25,7 @@ import { enrichProfile } from './profileEnricher';
 import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext, detectConsumableContent } from './externalContext';
 import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt, detectPartnerNeed, buildPartnerPivotPrompt } from './efir';
+import { detectSalesSignal, buildProductSalesPrompt } from './products';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -622,11 +623,23 @@ export async function startListener(_page?: any) {
             }
 
             // Пивот: запрос на партнёра/спеца → предложить ИИ-сотрудника + эфир
-            if (detectPartnerNeed(text)) {
+            const partnerNeed = detectPartnerNeed(text);
+            if (partnerNeed) {
                 const efir = getActiveEfir();
                 if (efir) {
                     allRules.push(buildPartnerPivotPrompt(efir));
                     console.log(`[efir] @${username} → partner-need pivot (ИИ-сотрудник + эфир)`);
+                }
+            }
+
+            // Продукт ИИ-ассистент: при сигнале продаж/интереса ИЛИ запросе на
+            // спеца — вплетаем продукт и ведём ПОСТЕПЕННО к покупке.
+            const recentTextP = history.map(m => m.text || '').join(' \n ');
+            if (detectSalesSignal(text) || detectSalesSignal(recentTextP) || partnerNeed) {
+                const block = buildProductSalesPrompt();
+                if (block) {
+                    allRules.push(block);
+                    console.log(`[product] @${username} → ИИ-ассистент sales context (postепенно к покупке)`);
                 }
             }
         }
