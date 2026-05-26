@@ -27,6 +27,7 @@ import { fetchExternalContext, formatForPrompt as formatExternalContext, detectC
 import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt, detectPartnerNeed, buildPartnerPivotPrompt } from './efir';
 import { detectSalesSignal, buildProductSalesPrompt } from './products';
 import { detectLiveHumanRequest, getFreeSlots, createMeeting, buildBookingPrompt, fmtMsk } from './booking';
+import { getPending, removePending, latestPending, classifyReaction, executeApprovalSend } from './approvals';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -121,6 +122,33 @@ export async function startListener(_page?: any) {
         }
     });
 
+    // ── Реакции на черновики-согласования (⚡ отправить / 💩 переделать) ──
+    client.addEventHandler(async (update: any) => {
+        try {
+            if (!update || update.className !== 'UpdateMessageReactions') return;
+            const msgId = update.msgId;
+            const p = getPending(msgId);
+            if (!p) return;
+            // Свежая реакция (recentReactions) или агрегат (results)
+            const recent = update.reactions?.recentReactions || [];
+            let emoji = '';
+            for (const r of recent) emoji = r.reaction?.emoticon || emoji;
+            if (!emoji && update.reactions?.results?.length) {
+                emoji = update.reactions.results[update.reactions.results.length - 1]?.reaction?.emoticon || '';
+            }
+            const verdict = classifyReaction(emoji);
+            console.log(`[approval] реакция на msgId=${msgId}: '${emoji}' → ${verdict || 'ignore'}`);
+            if (verdict === 'send') {
+                await executeApprovalSend(p, (t) => notifyAdmin(t, { rateLimitKey: `appr-${msgId}` }));
+            } else if (verdict === 'redo') {
+                removePending(msgId);
+                await notifyAdmin(`💩 Понял — черновик для @${p.targetUsername} переделать. Пришлю новый вариант.`, { rateLimitKey: `appr-redo-${msgId}` });
+            }
+        } catch (e: any) {
+            console.warn('[approval] reaction handler err:', e.message);
+        }
+    });
+
     client.addEventHandler(async (event: any) => {
         const message = event.message;
         if (!message?.isPrivate) return;
@@ -180,6 +208,24 @@ export async function startListener(_page?: any) {
                     adminUser = ensured.user;
                 }
                 if (adminUser) {
+                    // ── Фолбэк согласования: Роман ответил ⚡/💩 сообщением ──
+                    // (на случай если реакция не долетела). Берём последний
+                    // pending-черновик.
+                    const verdictMsg = classifyReaction((text || '').trim());
+                    if (verdictMsg) {
+                        const p = latestPending();
+                        if (p) {
+                            try { await message.markAsRead(); } catch (_) { }
+                            if (verdictMsg === 'send') {
+                                await executeApprovalSend(p, (t) => notifyAdmin(t, { rateLimitKey: `apprm-${p.msgId}` }));
+                            } else {
+                                removePending(p.msgId);
+                                await notifyAdmin(`💩 Понял — @${p.targetUsername} переделать. Пришлю новый вариант.`, { rateLimitKey: `apprm-redo-${p.msgId}` });
+                            }
+                            console.log(`[approval] msg-fallback '${text.trim()}' → ${verdictMsg} (@${p.targetUsername})`);
+                            return;  // обработали — выходим
+                        }
+                    }
                     // Сохраняем voice-транскрипт как USER-RECEIVED, чтобы Роман видел в /dialogues/52
                     if (isVoice && text) {
                         const adminDlg = await prisma.dialogue.findFirst({ where: { userId: adminUser.id }, orderBy: { id: 'desc' } });

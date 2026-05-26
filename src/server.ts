@@ -691,6 +691,32 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
     }
 });
 
+// ── Согласование: отправить Роману черновик для клиента (он реагирует ⚡/💩) ─
+fastify.post('/admin/approval/send', async (req, reply) => {
+    try {
+        const b = (req.body || {}) as {
+            targetUsername?: string; targetFirstName?: string; targetAccessHash?: string;
+            text?: string; registerEfir?: boolean;
+        };
+        if (!b.targetUsername || !b.text) return reply.code(400).send({ error: 'targetUsername + text required' });
+        const { sendDraftForApproval } = await import('./approvals');
+        const adminUsername = (process.env.ADMIN_USERNAME || 'roman_arctur').replace(/^@/, '');
+        const msgId = await sendDraftForApproval({
+            adminUsername,
+            targetUsername: b.targetUsername.replace(/^@/, ''),
+            targetFirstName: b.targetFirstName || '',
+            targetAccessHash: b.targetAccessHash,
+            text: b.text,
+            botId: persona.botId,
+            registerEfir: !!b.registerEfir,
+        });
+        if (!msgId) return reply.code(503).send({ error: 'client not connected or send failed' });
+        return { ok: true, msgId, persona: persona.botId };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── DNAI Studio integration: smoke + health + status (no auth on health) ───
 fastify.get('/admin/dnai/smoke', async (req, reply) => {
     try {
