@@ -598,6 +598,66 @@ fastify.get('/qa/status', async () => ({ pending: getPendingStatus() }));
 // External agent API (read + draft) — gated by AGENT_API_KEY env
 registerAgentApi(fastify);
 
+// ── Outreach: рассылка persona.outreachOpener по списку контактов ──────────
+// POST /admin/outreach/openers  body: { contacts:[{id,accessHash,username,firstName}],
+//   limit?, dryRun?, delayMs? }
+// Шлёт через сессию ЭТОГО сервиса (Алекс или Артур по BOT_ID). Создаёт
+// диалоги botId=<persona>, дедуп по facts.openerSentAt, паузы против флуда.
+// Ответы ловит штатный listener этого же сервиса.
+fastify.post('/admin/outreach/openers', async (req, reply) => {
+    try {
+        const body = (req.body || {}) as {
+            contacts?: Array<{ id?: string; accessHash?: string; username?: string; firstName?: string }>;
+            limit?: number; dryRun?: boolean; delayMs?: number;
+        };
+        const contacts = (body.contacts || []).slice(0, Math.min(body.limit ?? 20, 200));
+        if (contacts.length === 0) return reply.code(400).send({ error: 'no contacts' });
+        const opener = persona.outreachOpener;
+        if (!opener) return reply.code(400).send({ error: `persona ${persona.botId} has no outreachOpener` });
+
+        const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
+        const baseDelay = body.delayMs ?? 45000;  // 45с между отправками (безопасно)
+
+        // Fire-and-forget: запускаем цикл в фоне, отвечаем сразу.
+        // Прогресс — в логах [outreach] + в БД facts.openerSentAt.
+        (async () => {
+            let sent = 0, skipped = 0, failed = 0;
+            for (const c of contacts) {
+                const handle = c.username || c.id || '';
+                if (!handle) { failed++; continue; }
+                try {
+                    const { user } = await ensureUserAndDialogue(
+                        c.username || String(c.id), c.firstName || '', c.accessHash || undefined, 'SCOUT',
+                    );
+                    const facts = (user.facts as any) || {};
+                    if (facts.openerSentAt) { skipped++; console.log(`[outreach] skip ${handle} (already-sent)`); continue; }
+                    const text = opener.replace(/{name}/g, (c.firstName || '').trim() || 'Здравствуйте');
+                    if (body.dryRun) { sent++; console.log(`[outreach] DRY ${handle}: ${text.slice(0, 50)}`); continue; }
+
+                    await sendMessageToUser(user.id, text);
+                    facts.openerSentAt = new Date().toISOString();
+                    facts.openerCampaign = persona.botId + '-efir';
+                    await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } }).catch(() => { });
+                    sent++;
+                    console.log(`[outreach] ${persona.botId} → ${handle} opener sent (${sent}/${contacts.length})`);
+                    await sleep(baseDelay + Math.floor(Math.random() * 15000));
+                } catch (e: any) {
+                    failed++;
+                    console.warn(`[outreach] fail ${handle}: ${(e.message || '').slice(0, 100)}`);
+                    if (/PEER_FLOOD|FLOOD_WAIT/.test(e.message || '')) {
+                        console.error('[outreach] FLOOD — останавливаю рассылку'); break;
+                    }
+                }
+            }
+            console.log(`[outreach] ✅ DONE ${persona.botId}: sent=${sent} skipped=${skipped} failed=${failed}`);
+        })().catch(e => console.error('[outreach] loop error:', e.message));
+
+        return { persona: persona.botId, started: true, queued: contacts.length, delayMs: baseDelay, dryRun: !!body.dryRun };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
 // ── DNAI Studio integration: smoke + health + status (no auth on health) ───
 fastify.get('/admin/dnai/smoke', async (req, reply) => {
     try {
