@@ -2609,7 +2609,18 @@ const start = async () => {
                     )`);
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Approval_romanMsgId_idx" ON "Approval" ("romanMsgId")`);
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Approval_status_idx" ON "Approval" ("status")`);
-                console.log('[STARTUP] ✓ Dialogue.botId + Meeting + Approval tables ensured');
+                // Payment table (оплаты через @wallet)
+                await prisma.$executeRawUnsafe(`
+                    CREATE TABLE IF NOT EXISTS "Payment" (
+                        "id" SERIAL PRIMARY KEY,
+                        "botId" TEXT NOT NULL DEFAULT 'arthur',
+                        "amount" TEXT,
+                        "currency" TEXT,
+                        "fromUser" TEXT,
+                        "rawText" TEXT,
+                        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )`);
+                console.log('[STARTUP] ✓ Dialogue.botId + Meeting + Approval + Payment tables ensured');
             } catch (e: any) {
                 console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
             }

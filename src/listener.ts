@@ -155,6 +155,18 @@ export async function startListener(_page?: any) {
         if (!message?.isPrivate) return;
 
         const sender = await message.getSender();
+
+        // ── @wallet платёж-уведомление (ДО skip ботов) ─────────────────────
+        // Telegram @wallet шлёт сообщение «вы получили X» в аккаунт получателя.
+        // Перехватываем, парсим, фиксируем платёж + уведомляем Романа и Алекса.
+        if (sender?.username?.toLowerCase() === 'wallet' && !message.out) {
+            try {
+                const { handleWalletNotification } = await import('./wallet');
+                await handleWalletNotification(message.text || '', persona.botId);
+            } catch (e: any) { console.warn('[wallet] handler err:', e.message); }
+            return;
+        }
+
         if (!sender || sender.bot || message.out) return;
 
         const username = sender.username || sender.id.toString();
