@@ -24,6 +24,7 @@ import { detectEscalationIntent } from './escalationDetector';
 import { enrichProfile } from './profileEnricher';
 import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext, detectConsumableContent } from './externalContext';
+import { detectEfir, EFIR_PROMPT } from './efir';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -491,6 +492,14 @@ export async function startListener(_page?: any) {
         //    пустой → ничего не добавляется, поведение не меняется.
         if (persona.personaPrompt) {
             allRules.unshift(persona.personaPrompt);
+        }
+
+        // ── Сценарий «ЭФИР» (оба бота): если человек написал про эфир —
+        //    инжектим гайд как вести к записи. Только при совпадении —
+        //    не раздуваем промпт на каждом сообщении.
+        if (detectEfir(text)) {
+            allRules.push(EFIR_PROMPT);
+            console.log(`[efir] @${username} упомянул эфир — сценарий записи активирован`);
         }
 
         // ── Principle #12: auto-fetch external context (links / @handles) ──
