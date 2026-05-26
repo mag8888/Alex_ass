@@ -609,6 +609,7 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
         const body = (req.body || {}) as {
             contacts?: Array<{ id?: string; accessHash?: string; username?: string; firstName?: string }>;
             audience?: { statuses?: string[] };  // режим DB-аудитории (для Артура: клиенты WM)
+            customText?: string;  // если задан — шлём ЕГО вместо persona.outreachOpener (точечный персональный скрипт)
             limit?: number; dryRun?: boolean; delayMs?: number;
         };
         const cap = Math.min(body.limit ?? 20, 300);
@@ -631,7 +632,7 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
         }
 
         if (contacts.length === 0) return reply.code(400).send({ error: 'no contacts (ни contacts, ни audience не дали результата)' });
-        const opener = persona.outreachOpener;
+        const opener = (body.customText && body.customText.trim()) || persona.outreachOpener;
         if (!opener) return reply.code(400).send({ error: `persona ${persona.botId} has no outreachOpener` });
 
         const sleep = (ms: number) => new Promise(r => setTimeout(r, ms));
