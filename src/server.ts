@@ -608,10 +608,29 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
     try {
         const body = (req.body || {}) as {
             contacts?: Array<{ id?: string; accessHash?: string; username?: string; firstName?: string }>;
+            audience?: { statuses?: string[] };  // режим DB-аудитории (для Артура: клиенты WM)
             limit?: number; dryRun?: boolean; delayMs?: number;
         };
-        const contacts = (body.contacts || []).slice(0, Math.min(body.limit ?? 20, 200));
-        if (contacts.length === 0) return reply.code(400).send({ error: 'no contacts' });
+        const cap = Math.min(body.limit ?? 20, 300);
+        let contacts = (body.contacts || []).slice(0, cap);
+
+        // Audience-режим: тянем из БД (findAudience), мапим в contacts.
+        // Только username-юзеры с этого бота (botId через dialogue не нужен —
+        // sendMessageToUser резолвит по user). Дедуп по facts.openerSentAt ниже.
+        if (contacts.length === 0 && body.audience) {
+            const { findAudience } = await import('./broadcast');
+            const users = await findAudience({
+                statuses: (body.audience.statuses as any) || ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER', 'CHAT'],
+                limit: cap,
+                skipBroadcastedSinceHours: 0,
+            });
+            contacts = users
+                .filter(u => u.username && !(u.facts as any)?.openerSentAt)
+                .map(u => ({ id: u.telegramId, accessHash: u.accessHash || undefined, username: u.username!, firstName: u.firstName || '' }));
+            console.log(`[outreach] audience-режим: ${contacts.length} контактов из БД (cap ${cap})`);
+        }
+
+        if (contacts.length === 0) return reply.code(400).send({ error: 'no contacts (ни contacts, ни audience не дали результата)' });
         const opener = persona.outreachOpener;
         if (!opener) return reply.code(400).send({ error: `persona ${persona.botId} has no outreachOpener` });
 
