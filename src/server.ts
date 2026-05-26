@@ -610,6 +610,7 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
             contacts?: Array<{ id?: string; accessHash?: string; username?: string; firstName?: string }>;
             audience?: { statuses?: string[] };  // режим DB-аудитории (для Артура: клиенты WM)
             customText?: string;  // если задан — шлём ЕГО вместо persona.outreachOpener (точечный персональный скрипт)
+            registerEfir?: boolean; // после отправки — записать контакт на эфир-напоминания (утром + за 15 мин)
             limit?: number; dryRun?: boolean; delayMs?: number;
         };
         const cap = Math.min(body.limit ?? 20, 300);
@@ -658,6 +659,18 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
                     facts.openerSentAt = new Date().toISOString();
                     facts.openerCampaign = persona.botId + '-efir';
                     await prisma.user.update({ where: { id: user.id }, data: { facts: facts as any } }).catch(() => { });
+                    // Опц.: записать на эфир-напоминания (утром + за 15 мин + ссылка)
+                    if (body.registerEfir) {
+                        try {
+                            const { getActiveEfir } = await import('./efir');
+                            const { registerEfirAttendee } = await import('./booking');
+                            const efir = getActiveEfir();
+                            if (efir?.startUTC && new Date(efir.startUTC).getTime() > Date.now()) {
+                                await registerEfirAttendee({ userId: user.id, botId: persona.botId, efirStartISO: efir.startUTC, clientUsername: c.username || null, clientName: c.firstName || null });
+                                console.log(`[outreach] ${handle} зарегистрирован на эфир-напоминания`);
+                            }
+                        } catch (e: any) { console.warn('[outreach] efir-register err:', e.message); }
+                    }
                     sent++;
                     console.log(`[outreach] ${persona.botId} → ${handle} opener sent (${sent}/${contacts.length})`);
                     await sleep(baseDelay + Math.floor(Math.random() * 15000));
