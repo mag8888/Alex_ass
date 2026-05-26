@@ -45,7 +45,8 @@ export async function getFreeSlots(limit = 12): Promise<Slot[]> {
 
     const slots: Slot[] = [];
     const days = ['вс', 'пн', 'вт', 'ср', 'чт', 'пт', 'сб'];
-    for (let d = 0; d < DAYS_AHEAD && slots.length < limit; d++) {
+    // Не записываем на СЕГОДНЯ (Roman): слоты начинаем с завтра (d=1).
+    for (let d = 1; d <= DAYS_AHEAD && slots.length < limit; d++) {
         // дата в МСК
         const base = new Date(now + d * 86400_000);
         for (let h = SLOT_START_MSK; h < SLOT_END_MSK && slots.length < limit; h++) {
