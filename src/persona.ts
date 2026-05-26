@@ -119,3 +119,14 @@ export const persona: PersonaConfig = PERSONAS[BOT_ID];
 export function getPersona(): PersonaConfig {
     return persona;
 }
+
+/**
+ * Является ли username админом текущей персоны (Роман — у обоих; Алекс —
+ * дополнительно у бота Алекса). Админы: не получают авто-ответ как клиенты,
+ * получают эскалации, могут давать контекст/обучение.
+ */
+export function isAdmin(username: string | null | undefined): boolean {
+    if (!username) return false;
+    const u = username.replace(/^@/, '').toLowerCase();
+    return persona.adminTargets.some(a => a.toLowerCase() === u);
+}

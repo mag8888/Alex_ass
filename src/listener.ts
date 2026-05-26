@@ -1,7 +1,7 @@
 import { NewMessage } from "telegram/events";
 import { Api } from "telegram";
 import { getClient } from "./client";
-import { persona } from "./persona";
+import { persona, isAdmin } from "./persona";
 import {
     ensureUserAndDialogue,
     saveMessageToDb,
@@ -162,13 +162,21 @@ export async function startListener(_page?: any) {
         }
 
         // Skip GPT auto-reply for admin (avoid feedback loops with notifyAdmin).
+        // Админы: Роман (@roman_arctur) у обоих ботов + Алекс (@alex_hardi1) у
+        // бота Алекса. Admin-сообщения = НЕ клиентский диалог: контекст/обучение
+        // (эфиры, продукты, примеры диалогов) → сохраняем как global rule.
         // НО: voice от админа сохраняем + если есть pendingCardBrief/Full — обрабатываем consent.
-        if (username.toLowerCase() === getAdminUsername().toLowerCase()) {
+        if (isAdmin(username)) {
             // Admin path: НЕ markAsRead в начале. Только если будем доставлять
             // pending — markAsRead прямо перед send. Если нет — read останется
             // непомеченным (так лучше: «не видел» лучше чем «прочитал и забил»).
             try {
-                const adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
+                // Гарантируем что admin-user есть (Алекс мог ещё не писать боту).
+                let adminUser = await prisma.user.findFirst({ where: { OR: [{ username: username }, { telegramId: username }] } });
+                if (!adminUser) {
+                    const ensured = await ensureUserAndDialogue(username, firstName, sender.accessHash?.toString());
+                    adminUser = ensured.user;
+                }
                 if (adminUser) {
                     // Сохраняем voice-транскрипт как USER-RECEIVED, чтобы Роман видел в /dialogues/52
                     if (isVoice && text) {
@@ -207,6 +215,28 @@ export async function startListener(_page?: any) {
                             await prisma.user.update({ where: { id: adminUser.id }, data: { facts: facts as any } });
                             console.log(`[Listener admin-test] Delivered fresh-built cards to @${username}`);
                         }
+                    }
+                    // ── #2/#3: контекст/обучение от админа ──────────────────
+                    // Если админ прислал содержательное сообщение (не consent,
+                    // не короткую команду) — это контекст по эфирам/продуктам
+                    // или пример диалога для обучения. Сохраняем как global rule
+                    // (бот сразу начнёт учитывать через ≤30с, cache invalidated).
+                    const trimmed = (text || '').trim();
+                    const isConsentOnly = consentRe.test(trimmed) && trimmed.length < 25;
+                    if (!facts.pendingCardOwed && !isConsentOnly && trimmed.length > 40) {
+                        try {
+                            await prisma.rule.create({
+                                data: {
+                                    content: `[КОНТЕКСТ от @${username}${isVoice ? ' 🎙️' : ''}]: ${trimmed.slice(0, 2000)}`,
+                                    isGlobal: true,
+                                    isActive: true,
+                                },
+                            });
+                            invalidateContextCache();
+                            try { await message.markAsRead(); } catch (_) { }
+                            await sendMessageToUser(adminUser.id, 'Принял, учту в работе ✅');
+                            console.log(`[admin-intake] @${username} → контекст/обучение сохранён как rule (${trimmed.length} chars)`);
+                        } catch (e: any) { console.warn('[admin-intake] err:', e.message); }
                     }
                 }
             } catch (e: any) { console.warn(`[Listener admin-test] err:`, e.message); }
