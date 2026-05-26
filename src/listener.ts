@@ -156,13 +156,17 @@ export async function startListener(_page?: any) {
 
         const sender = await message.getSender();
 
-        // ── @wallet платёж-уведомление (ДО skip ботов) ─────────────────────
-        // Telegram @wallet шлёт сообщение «вы получили X» в аккаунт получателя.
-        // Перехватываем, парсим, фиксируем платёж + уведомляем Романа и Алекса.
-        if (sender?.username?.toLowerCase() === 'wallet' && !message.out) {
+        // ── @wallet платёж (ДО skip) ───────────────────────────────────────
+        // Оплата приходит сообщением ЧЕРЕЗ @wallet (via-bot): текст вида
+        // «✅ Перевод криптовалюты: 1 USDT ~1.00 USD». Отправитель — плательщик
+        // (клиент или Роман на тесте). Ловим по тексту, парсим, уведомляем
+        // Романа+Алекса, фиксируем платёж.
+        const walletText = message.text || message.message || '';
+        if (!message.out && /перевод\s+криптовалют/i.test(walletText)) {
             try {
                 const { handleWalletNotification } = await import('./wallet');
-                await handleWalletNotification(message.text || '', persona.botId);
+                const fromHandle = sender?.username ? '@' + sender.username : (sender?.firstName || '');
+                await handleWalletNotification(walletText, persona.botId, fromHandle);
             } catch (e: any) { console.warn('[wallet] handler err:', e.message); }
             return;
         }
