@@ -24,7 +24,7 @@ import { detectEscalationIntent } from './escalationDetector';
 import { enrichProfile } from './profileEnricher';
 import { buildWelcomeMessages } from './welcomeBuilder';
 import { fetchExternalContext, formatForPrompt as formatExternalContext, detectConsumableContent } from './externalContext';
-import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt } from './efir';
+import { detectEfir, detectAnons, getActiveEfir, buildEfirPrompt, detectPartnerNeed, buildPartnerPivotPrompt } from './efir';
 import { findMatches, formatMatchesForPrompt } from './matchEngine';
 import { getUserByTelegramId, addAiNote, addCrmTag, patchProfile, getCachedEtag, isWMEnabled, WMUser, WritableProfileFields } from './wmClient';
 
@@ -588,6 +588,15 @@ export async function startListener(_page?: any) {
                     const mode = detectAnons(text) ? 'full' : 'native';
                     allRules.push(buildEfirPrompt(efir, mode));
                     console.log(`[efir] @${username} → эфир «${efir.id}» mode=${mode} (current=${efirInCurrent} history=${efirInHistory})`);
+                }
+            }
+
+            // Пивот: запрос на партнёра/спеца → предложить ИИ-сотрудника + эфир
+            if (detectPartnerNeed(text)) {
+                const efir = getActiveEfir();
+                if (efir) {
+                    allRules.push(buildPartnerPivotPrompt(efir));
+                    console.log(`[efir] @${username} → partner-need pivot (ИИ-сотрудник + эфир)`);
                 }
             }
         }
