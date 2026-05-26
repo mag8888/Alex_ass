@@ -127,7 +127,7 @@ export async function startListener(_page?: any) {
         try {
             if (!update || update.className !== 'UpdateMessageReactions') return;
             const msgId = update.msgId;
-            const p = getPending(msgId);
+            const p = await getPending(msgId);
             if (!p) return;
             // Свежая реакция (recentReactions) или агрегат (results)
             const recent = update.reactions?.recentReactions || [];
@@ -141,7 +141,7 @@ export async function startListener(_page?: any) {
             if (verdict === 'send') {
                 await executeApprovalSend(p, (t) => notifyAdmin(t, { rateLimitKey: `appr-${msgId}` }));
             } else if (verdict === 'redo') {
-                removePending(msgId);
+                await removePending(msgId, 'REDO');
                 await notifyAdmin(`💩 Понял — черновик для @${p.targetUsername} переделать. Пришлю новый вариант.`, { rateLimitKey: `appr-redo-${msgId}` });
             }
         } catch (e: any) {
@@ -213,13 +213,13 @@ export async function startListener(_page?: any) {
                     // pending-черновик.
                     const verdictMsg = classifyReaction((text || '').trim());
                     if (verdictMsg) {
-                        const p = latestPending();
+                        const p = await latestPending();
                         if (p) {
                             try { await message.markAsRead(); } catch (_) { }
                             if (verdictMsg === 'send') {
                                 await executeApprovalSend(p, (t) => notifyAdmin(t, { rateLimitKey: `apprm-${p.msgId}` }));
                             } else {
-                                removePending(p.msgId);
+                                await removePending(p.msgId, 'REDO');
                                 await notifyAdmin(`💩 Понял — @${p.targetUsername} переделать. Пришлю новый вариант.`, { rateLimitKey: `apprm-redo-${p.msgId}` });
                             }
                             console.log(`[approval] msg-fallback '${text.trim()}' → ${verdictMsg} (@${p.targetUsername})`);
@@ -230,14 +230,14 @@ export async function startListener(_page?: any) {
                     // ── Правка черновика: висит pending + админ дал фидбэк (не
                     //    вердикт) → регенерим исправленный вариант и шлём на
                     //    повторное согласование МГНОВЕННО (не «учту»).
-                    const pendingDraft = latestPending();
+                    const pendingDraft = await latestPending();
                     if (pendingDraft && (text || '').trim().length > 2) {
                         try { await message.markAsRead(); } catch (_) { }
                         try {
                             const { reviseDraft } = await import('./gpt');
                             const revised = await reviseDraft(pendingDraft.text, text);
                             if (revised) {
-                                removePending(pendingDraft.msgId);
+                                await removePending(pendingDraft.msgId, 'REDO');
                                 const { sendDraftForApproval } = await import('./approvals');
                                 await sendDraftForApproval({
                                     adminUsername: username.replace(/^@/, ''),

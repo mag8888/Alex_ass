@@ -2593,7 +2593,23 @@ const start = async () => {
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_scheduledAt_idx" ON "Meeting" ("scheduledAt")`);
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_status_idx" ON "Meeting" ("status")`);
                 await prisma.$executeRawUnsafe(`ALTER TABLE "Meeting" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'CALL'`);
-                console.log('[STARTUP] ✓ Dialogue.botId + Meeting table ensured');
+                // Approval table (согласование черновиков) — idempotent
+                await prisma.$executeRawUnsafe(`
+                    CREATE TABLE IF NOT EXISTS "Approval" (
+                        "id" SERIAL PRIMARY KEY,
+                        "romanMsgId" INTEGER NOT NULL,
+                        "targetUsername" TEXT NOT NULL,
+                        "targetFirstName" TEXT,
+                        "targetAccessHash" TEXT,
+                        "text" TEXT NOT NULL,
+                        "botId" TEXT NOT NULL DEFAULT 'arthur',
+                        "registerEfir" BOOLEAN NOT NULL DEFAULT false,
+                        "status" TEXT NOT NULL DEFAULT 'PENDING',
+                        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Approval_romanMsgId_idx" ON "Approval" ("romanMsgId")`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Approval_status_idx" ON "Approval" ("status")`);
+                console.log('[STARTUP] ✓ Dialogue.botId + Meeting + Approval tables ensured');
             } catch (e: any) {
                 console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
             }

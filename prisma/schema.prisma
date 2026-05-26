@@ -158,6 +158,24 @@ model Meeting {
   @@index([status])
 }
 
+// Черновик на согласование Роману (реакция ⚡/💩). Персистентно — переживает
+// редеплои (раньше было in-memory и терялось).
+model Approval {
+  id              Int      @id @default(autoincrement())
+  romanMsgId      Int      // id сообщения-черновика, отправленного Роману
+  targetUsername  String
+  targetFirstName String?
+  targetAccessHash String?
+  text            String
+  botId           String   @default("arthur")
+  registerEfir    Boolean  @default(false)
+  status          String   @default("PENDING") // PENDING | SENT | REDO
+  createdAt       DateTime @default(now())
+
+  @@index([romanMsgId])
+  @@index([status])
+}
+
 enum DialogueOutcome {
   IN_PROGRESS       // active conversation, not concluded yet
   DROPPED_NO_REPLY  // user never replied to our outreach
