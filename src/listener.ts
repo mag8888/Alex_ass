@@ -704,6 +704,21 @@ export async function startListener(_page?: any) {
             } catch (e: any) { console.warn('[booking] create err:', e.message); }
         }
 
+        // ── Эфир: клиент подтвердил участие → регистрируем на напоминания ───
+        if (gptResult.efirRegister) {
+            try {
+                const efir = getActiveEfir();
+                if (efir?.startUTC && new Date(efir.startUTC).getTime() > Date.now()) {
+                    const { registerEfirAttendee } = await import('./booking');
+                    const m = await registerEfirAttendee({
+                        userId: user.id, dialogueId: dialogue.id, botId: persona.botId,
+                        efirStartISO: efir.startUTC, clientUsername: username, clientName: user.firstName,
+                    });
+                    console.log(`[efir-attendee] @${username} зарегистрирован на эфир (meetingId=${m.id})`);
+                }
+            } catch (e: any) { console.warn('[efir-attendee] err:', e.message); }
+        }
+
         // ── Persist extracted profile + stage update ────────────────────────
         if (gptResult.extractedProfile && Object.keys(gptResult.extractedProfile).length > 0) {
             const allowed: (keyof typeof gptResult.extractedProfile)[] = [

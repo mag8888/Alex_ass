@@ -67,7 +67,7 @@ export async function getFreeSlots(limit = 12): Promise<Slot[]> {
     return slots;
 }
 
-/** Создать бронь + вернуть запись. */
+/** Создать бронь созвона (CALL — напоминаем Роману) + вернуть запись. */
 export async function createMeeting(args: {
     userId: number; dialogueId?: number; botId: string; scheduledAtISO: string;
     clientUsername?: string | null; clientName?: string | null;
@@ -77,7 +77,32 @@ export async function createMeeting(args: {
             userId: args.userId,
             dialogueId: args.dialogueId ?? null,
             botId: args.botId,
+            kind: 'CALL',
             scheduledAt: new Date(args.scheduledAtISO),
+            clientUsername: args.clientUsername ?? null,
+            clientName: args.clientName ?? null,
+        },
+    });
+}
+
+/** Зарегистрировать клиента на ЭФИР (EFIR — напоминаем КЛИЕНТУ).
+ *  Дедуп: не плодим записи если уже зарегистрирован на тот же старт. */
+export async function registerEfirAttendee(args: {
+    userId: number; dialogueId?: number; botId: string; efirStartISO: string;
+    clientUsername?: string | null; clientName?: string | null;
+}) {
+    const when = new Date(args.efirStartISO);
+    const exists = await prisma.meeting.findFirst({
+        where: { userId: args.userId, kind: 'EFIR', scheduledAt: when, status: { not: 'CANCELLED' } },
+    });
+    if (exists) return exists;
+    return prisma.meeting.create({
+        data: {
+            userId: args.userId,
+            dialogueId: args.dialogueId ?? null,
+            botId: args.botId,
+            kind: 'EFIR',
+            scheduledAt: when,
             clientUsername: args.clientUsername ?? null,
             clientName: args.clientName ?? null,
         },

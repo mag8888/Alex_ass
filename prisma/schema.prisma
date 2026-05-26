@@ -144,7 +144,8 @@ model Meeting {
   userId         Int
   dialogueId     Int?
   botId          String   @default("arthur")
-  scheduledAt    DateTime // UTC, начало слота
+  kind           String   @default("CALL") // CALL=созвон с Романом (напоминать Роману) | EFIR=эфир (напоминать клиенту)
+  scheduledAt    DateTime // UTC, начало слота/эфира
   durationMin    Int      @default(30)
   status         String   @default("BOOKED") // BOOKED | REMINDED_MORNING | REMINDED_15 | DONE | CANCELLED
   clientUsername String?

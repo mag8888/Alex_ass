@@ -2553,6 +2553,7 @@ const start = async () => {
                     )`);
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_scheduledAt_idx" ON "Meeting" ("scheduledAt")`);
                 await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Meeting_status_idx" ON "Meeting" ("status")`);
+                await prisma.$executeRawUnsafe(`ALTER TABLE "Meeting" ADD COLUMN IF NOT EXISTS "kind" TEXT NOT NULL DEFAULT 'CALL'`);
                 console.log('[STARTUP] ✓ Dialogue.botId + Meeting table ensured');
             } catch (e: any) {
                 console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
@@ -2574,15 +2575,15 @@ const start = async () => {
                 try { startMeetupFollowupCron(); } catch (e) { console.error('[STARTUP] meetup followup failed:', e); }
                 try { startCardsFollowupCron(); } catch (e) { console.error('[STARTUP] cards followup failed:', e); }
                 try { startDailyBatchSweep(); } catch (e) { console.error('[STARTUP] daily batch sweep failed:', e); }
-                // Напоминания о созвонах — только на одном сервисе (arthur),
-                // видит все Meeting в общей БД, шлёт Роману (без дублей).
-                try {
-                    const { startBookingRemindersCron } = await import('./bookingReminders');
-                    startBookingRemindersCron();
-                } catch (e) { console.error('[STARTUP] booking reminders failed:', e); }
             } else {
                 console.log(`[STARTUP] persona=${persona.botId} — outbound-кроны выключены (только ответы на входящие)`);
             }
+            // Напоминания (созвоны+эфир) — на ОБОИХ сервисах. Внутри: CALL шлёт
+            // Роману только на arthur, EFIR — своим клиентам по botId.
+            try {
+                const { startBookingRemindersCron } = await import('./bookingReminders');
+                startBookingRemindersCron();
+            } catch (e) { console.error('[STARTUP] booking reminders failed:', e); }
             // DNAI proactive health probe (60s per TZ §5) — обновляет
             // circuit-state, чтобы listener в реальном времени знал когда
             // Аида недоступна и работал автономно с локальным контекстом.
