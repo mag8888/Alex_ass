@@ -621,15 +621,19 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
         // sendMessageToUser резолвит по user). Дедуп по facts.openerSentAt ниже.
         if (contacts.length === 0 && body.audience) {
             const { findAudience } = await import('./broadcast');
+            // Фетчим БОЛЬШЕ кандидатов (до 500), отсеиваем уже охваченных
+            // (openerSentAt) и берём первые cap НОВЫХ — иначе дедуп съедает
+            // первые 40 и остаётся мало.
             const users = await findAudience({
                 statuses: (body.audience.statuses as any) || ['LEAD', 'QUALIFIED', 'MATCHED', 'CUSTOMER', 'CHAT'],
-                limit: cap,
+                limit: 500,
                 skipBroadcastedSinceHours: 0,
             });
             contacts = users
                 .filter(u => u.username && !(u.facts as any)?.openerSentAt)
+                .slice(0, cap)
                 .map(u => ({ id: u.telegramId, accessHash: u.accessHash || undefined, username: u.username!, firstName: u.firstName || '' }));
-            console.log(`[outreach] audience-режим: ${contacts.length} контактов из БД (cap ${cap})`);
+            console.log(`[outreach] audience-режим: ${contacts.length} новых контактов из БД (cap ${cap}, fetched ${users.length})`);
         }
 
         if (contacts.length === 0) return reply.code(400).send({ error: 'no contacts (ни contacts, ни audience не дали результата)' });
