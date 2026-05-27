@@ -337,12 +337,40 @@ export async function startListener(_page?: any) {
                             console.log(`[Listener admin-test] Delivered fresh-built cards to @${username}`);
                         }
                     }
+                    const trimmed = (text || '').trim();
+
+                    // ── Инструкция-аутрич: «@user пригласи/свяжись/напиши» →
+                    //    бот СРАЗУ крафтит черновик клиенту и шлёт Роману на
+                    //    согласование (⚡/💩), а НЕ «учту».
+                    const targetM = trimmed.match(/@([A-Za-z][A-Za-z0-9_]{3,31})/);
+                    const outreachIntent = /(свяж|напиш|приглас|предлож|добав\w*\s+в\s+список|на\s+эфир|отправь|подготов|сделай\s+\P{L}*(шаблон|письмо|сообщени))/iu.test(trimmed);
+                    const selfHandles = ['roman_arctur', 'alex_hardi1', 'alex_hardi8', 'mag_88888888', 'wallet'];
+                    if (targetM && outreachIntent && !selfHandles.includes(targetM[1].toLowerCase())) {
+                        try { await message.markAsRead(); } catch (_) { }
+                        try {
+                            const { craftOutreachDraft } = await import('./gpt');
+                            const draft = await craftOutreachDraft(trimmed);
+                            if (draft) {
+                                const { sendDraftForApproval } = await import('./approvals');
+                                const wantsEfir = /эфир/i.test(trimmed);
+                                await sendDraftForApproval({
+                                    adminUsername: username.replace(/^@/, ''),
+                                    targetUsername: targetM[1], targetFirstName: '',
+                                    text: draft, botId: persona.botId, registerEfir: wantsEfir,
+                                });
+                                console.log(`[admin-outreach] @${username} инструкция → черновик @${targetM[1]} на согласование`);
+                            } else {
+                                await notifyAdmin('Не смог составить черновик — повтори инструкцию.', { rateLimitKey: 'craft-fail' });
+                            }
+                        } catch (e: any) { console.warn('[admin-outreach] err:', e.message); }
+                        return;
+                    }
+
                     // ── #2/#3: контекст/обучение от админа ──────────────────
                     // Если админ прислал содержательное сообщение (не consent,
                     // не короткую команду) — это контекст по эфирам/продуктам
                     // или пример диалога для обучения. Сохраняем как global rule
                     // (бот сразу начнёт учитывать через ≤30с, cache invalidated).
-                    const trimmed = (text || '').trim();
                     const isConsentOnly = consentRe.test(trimmed) && trimmed.length < 25;
                     if (!facts.pendingCardOwed && !isConsentOnly && trimmed.length > 40) {
                         try {

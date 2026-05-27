@@ -423,6 +423,37 @@ export async function reviseDraft(original: string, correction: string): Promise
     return null;
 }
 
+// ── Черновик клиенту по инструкции админа ──────────────────────────────────
+// Роман/Алекс пишет «@user пригласи на эфир / свяжись» → составляем первое
+// сообщение клиенту (для согласования). Возвращает только текст.
+export async function craftOutreachDraft(instruction: string, targetName = ''): Promise<string | null> {
+    const sys = [
+        'Ты — ассистент Романа. По инструкции составь короткое ПЕРВОЕ сообщение клиенту в Telegram.',
+        'Пиши от Романа («пишу от Романа»), на «Вы», тепло и нативно, 2-3 коротких предложения, без воды и канцелярита.',
+        'Если речь про эфир — это эфир по внедрению ИИ в бизнес: реальные кейсы, ИИ-сотрудники, разбор бизнесов; четверг 28 мая, 12:00 МСК. Заверши вопросом «зафиксировать Вас?» и обещанием напомнить + прислать ссылку.',
+        targetName ? `Имя клиента: ${targetName}.` : 'Имя клиента неизвестно — начни с «Добрый день!».',
+        'Верни ТОЛЬКО текст сообщения клиенту — без кавычек, без пояснений.',
+    ].join('\n');
+    const usr = `Инструкция Романа: ${instruction}\n\nТекст сообщения клиенту:`;
+    try {
+        const a = getAnthropic();
+        if (a) {
+            const r: any = await a.messages.create({ model: ANTHROPIC_MODEL, max_tokens: 600, system: sys, messages: [{ role: 'user', content: usr }] });
+            const t = r?.content?.[0]?.text?.trim();
+            if (t) return t;
+        }
+    } catch (e: any) { console.warn('[craftOutreach] anthropic err:', e?.message); }
+    try {
+        const o = getOpenAI();
+        if (o) {
+            const r: any = await o.chat.completions.create({ model: OPENAI_MODEL, max_tokens: 600, messages: [{ role: 'system', content: sys }, { role: 'user', content: usr }] });
+            const t = r?.choices?.[0]?.message?.content?.trim();
+            if (t) return t;
+        }
+    } catch (e: any) { console.warn('[craftOutreach] openai err:', e?.message); }
+    return null;
+}
+
 // ── Main entrypoint ──────────────────────────────────────────────────────────
 
 export async function generateResponse(
