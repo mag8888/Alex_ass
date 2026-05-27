@@ -467,13 +467,20 @@ export async function startListener(_page?: any) {
         // pending. Если нет — листенер просто завершает обработку без GPT-реплая.
         let cardsJustDelivered = false;
         let pendingCardSilenceMode = false;
+        // Эфир-контекст: если недавно бот звал на эфир — «да» означает «да на
+        // эфир», а НЕ согласие на визитку. В этом случае НЕ запускаем
+        // welcome-card флоу, отдаём управление GPT (он зовёт на эфир).
+        const recentForEfir = await prisma.message.findMany({
+            where: { dialogueId: dialogue.id }, orderBy: { id: 'desc' }, take: 8, select: { text: true },
+        });
+        const efirInRecent = recentForEfir.some(m => detectEfir(m.text || ''));
         try {
             const facts = (user.facts as any) || {};
             const consentRe = /(?:^|\P{L})(?:да|давайте|давай|интересно|конечно|покажите|покажи|присыла[ий]те|присыл[ая]ть|прислать|пришли(?:те)?|шли(?:те)?|ок|окей|жду|пример|пробуй|готов(?:а|ы)?|можно)(?:$|\P{L})/iu;
-            if (facts.pendingCardOwed) {
+            if (facts.pendingCardOwed && !efirInRecent) {
                 pendingCardSilenceMode = true;  // GPT не должен генерить карточки сам
             }
-            if (consentRe.test(text) && facts.pendingCardOwed) {
+            if (consentRe.test(text) && facts.pendingCardOwed && !efirInRecent) {
                 const enriched = await enrichProfile(facts.pendingCardForUsername || username, facts.pendingCardForTgId);
                 if (!enriched.firstName && user.firstName) enriched.firstName = user.firstName;
                 const msgs = buildWelcomeMessages(enriched);
