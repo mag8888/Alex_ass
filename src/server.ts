@@ -754,8 +754,19 @@ fastify.get('/api/v1/balance/:clientUsername', async (req, reply) => {
     } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
-// POST /admin/agents — создать агента (для Романа). Возвращает apiKey.
+// ── /admin/agents — CRUD для агентов биллинга (только для Романа) ──────────
+// Защищено заголовком X-Admin-Token = env WAVE_MATCH_API_KEY (на AI_ASS).
+function checkAdmin(req: any, reply: any): boolean {
+    const expected = (process.env.WAVE_MATCH_API_KEY || '').trim();
+    if (!expected) { reply.code(503).send({ error: 'admin disabled: WAVE_MATCH_API_KEY not set' }); return false; }
+    const provided = (req.headers['x-admin-token'] as string || '').trim();
+    if (provided !== expected) { reply.code(401).send({ error: 'invalid admin token' }); return false; }
+    return true;
+}
+
+// POST /admin/agents — создать агента. Возвращает apiKey (показывается ОДИН раз).
 fastify.post('/admin/agents', async (req, reply) => {
+    if (!checkAdmin(req, reply)) return;
     try {
         const b = (req.body || {}) as { name?: string; webhookUrl?: string };
         if (!b.name) return reply.code(400).send({ error: 'name required' });
@@ -764,7 +775,54 @@ fastify.post('/admin/agents', async (req, reply) => {
         const agent = await prisma.agent.create({
             data: { name: b.name, apiKey, webhookUrl: b.webhookUrl || null },
         });
-        return { id: agent.id, name: agent.name, apiKey: agent.apiKey, webhookUrl: agent.webhookUrl };
+        return { id: agent.id, name: agent.name, apiKey: agent.apiKey, webhookUrl: agent.webhookUrl, createdAt: agent.createdAt };
+    } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
+
+// GET /admin/agents — список агентов (apiKey маскируется).
+fastify.get('/admin/agents', async (req, reply) => {
+    if (!checkAdmin(req, reply)) return;
+    try {
+        const agents = await prisma.agent.findMany({ orderBy: { id: 'asc' } });
+        return agents.map((a: any) => ({
+            id: a.id, name: a.name,
+            apiKeyMasked: a.apiKey.slice(0, 8) + '...' + a.apiKey.slice(-4),
+            webhookUrl: a.webhookUrl, createdAt: a.createdAt,
+        }));
+    } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
+
+// PATCH /admin/agents/:id — обновить name / webhookUrl.
+fastify.patch('/admin/agents/:id', async (req, reply) => {
+    if (!checkAdmin(req, reply)) return;
+    try {
+        const id = Number((req.params as any).id);
+        const b = (req.body || {}) as { name?: string; webhookUrl?: string | null };
+        const data: any = {};
+        if (b.name !== undefined) data.name = b.name;
+        if (b.webhookUrl !== undefined) data.webhookUrl = b.webhookUrl;
+        if (!Object.keys(data).length) return reply.code(400).send({ error: 'name or webhookUrl required' });
+        const agent = await prisma.agent.update({ where: { id }, data });
+        return { id: agent.id, name: agent.name, webhookUrl: agent.webhookUrl };
+    } catch (e: any) {
+        if (e.code === 'P2025') return reply.code(404).send({ error: 'agent not found' });
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// POST /api/v1/invoice/:id/cancel — отменить PENDING-счёт (со стороны агента).
+fastify.post('/api/v1/invoice/:id/cancel', async (req, reply) => {
+    try {
+        const apiKey = (req.headers['x-agent-api-key'] as string || '').trim();
+        const { findAgentByApiKey } = await import('./invoicing');
+        const agent = await findAgentByApiKey(apiKey);
+        if (!agent) return reply.code(401).send({ error: 'invalid api key' });
+        const id = Number((req.params as any).id);
+        const inv = await prisma.invoice.findUnique({ where: { id } });
+        if (!inv || inv.agentId !== agent.id) return reply.code(404).send({ error: 'not found' });
+        if (inv.status !== 'PENDING') return reply.code(409).send({ error: `cannot cancel: status=${inv.status}` });
+        const upd = await prisma.invoice.update({ where: { id }, data: { status: 'CANCELLED' } });
+        return { id: upd.id, status: upd.status };
     } catch (e: any) { return reply.code(500).send({ error: e.message }); }
 });
 
