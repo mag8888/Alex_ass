@@ -44,12 +44,26 @@ export async function handleWalletNotification(text: string, botId: string, from
         `Бот: ${botId}`,
     );
 
-    // Фиксация в БД
+    // Фиксация в БД + возврат id для линковки с Invoice
+    let paymentId: number | null = null;
     try {
-        await prisma.$executeRawUnsafe(
-            `INSERT INTO "Payment" ("botId","amount","currency","fromUser","rawText","createdAt") VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP)`,
+        const rows: any = await prisma.$queryRawUnsafe(
+            `INSERT INTO "Payment" ("botId","amount","currency","fromUser","rawText","createdAt")
+             VALUES ($1,$2,$3,$4,$5,CURRENT_TIMESTAMP) RETURNING "id"`,
             botId, p.amount || null, p.currency || null, fromHandle || null, text.slice(0, 1000),
         );
-        console.log('[wallet] платёж зафиксирован в БД');
+        paymentId = rows?.[0]?.id ?? null;
+        console.log('[wallet] платёж зафиксирован в БД, paymentId=', paymentId);
     } catch (e: any) { console.warn('[wallet] DB insert err:', e.message); }
+
+    // Попытка связать с PENDING-счётом и дёрнуть webhook агенту
+    if (paymentId && p.amount && p.currency && fromHandle) {
+        try {
+            const { matchPaymentToInvoice, onInvoicePaid } = await import('./invoicing');
+            const inv = await matchPaymentToInvoice({
+                paymentId, clientUsername: fromHandle, amount: p.amount, currency: p.currency,
+            });
+            if (inv) await onInvoicePaid(inv);
+        } catch (e: any) { console.warn('[wallet] invoice match err:', e.message); }
+    }
 }

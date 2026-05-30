@@ -695,6 +695,79 @@ fastify.post('/admin/outreach/openers', async (req, reply) => {
     }
 });
 
+// ── Биллинг API для внешних агентов ────────────────────────────────────────
+// POST /api/v1/invoice — создать счёт (X-Agent-Api-Key, идемпотентность orderId)
+fastify.post('/api/v1/invoice', async (req, reply) => {
+    try {
+        const apiKey = (req.headers['x-agent-api-key'] as string || '').trim();
+        const { findAgentByApiKey, createInvoice, sendInvoiceDM } = await import('./invoicing');
+        const agent = await findAgentByApiKey(apiKey);
+        if (!agent) return reply.code(401).send({ error: 'invalid api key' });
+
+        const b = (req.body || {}) as { orderId?: string; clientUsername?: string; amount?: string | number; currency?: string };
+        if (!b.orderId || !b.clientUsername || !b.amount || !b.currency)
+            return reply.code(400).send({ error: 'orderId, clientUsername, amount, currency required' });
+
+        const { invoice, created } = await createInvoice({
+            agentId: agent.id, orderId: b.orderId, clientUsername: b.clientUsername,
+            amount: String(b.amount), currency: b.currency,
+        });
+        if (created) sendInvoiceDM(invoice).catch(() => { });  // fire-and-forget DM клиенту
+        return {
+            id: invoice.id, orderId: invoice.orderId, status: invoice.status,
+            clientUsername: invoice.clientUsername, amount: invoice.amount, currency: invoice.currency,
+            expiresAt: invoice.expiresAt.toISOString(), created,
+        };
+    } catch (e: any) {
+        return reply.code(500).send({ error: e.message });
+    }
+});
+
+// GET /api/v1/invoice/:id — статус
+fastify.get('/api/v1/invoice/:id', async (req, reply) => {
+    try {
+        const apiKey = (req.headers['x-agent-api-key'] as string || '').trim();
+        const { findAgentByApiKey } = await import('./invoicing');
+        const agent = await findAgentByApiKey(apiKey);
+        if (!agent) return reply.code(401).send({ error: 'invalid api key' });
+        const id = Number((req.params as any).id);
+        const inv = await prisma.invoice.findUnique({ where: { id } });
+        if (!inv || inv.agentId !== agent.id) return reply.code(404).send({ error: 'not found' });
+        return {
+            id: inv.id, orderId: inv.orderId, status: inv.status,
+            clientUsername: inv.clientUsername, amount: inv.amount, currency: inv.currency,
+            paidAt: inv.paidAt?.toISOString() || null, paymentId: inv.paymentId,
+            expiresAt: inv.expiresAt.toISOString(), remindersSent: inv.remindersSent,
+        };
+    } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
+
+// GET /api/v1/balance/:clientUsername — суммы оплаченных счетов по валютам
+fastify.get('/api/v1/balance/:clientUsername', async (req, reply) => {
+    try {
+        const apiKey = (req.headers['x-agent-api-key'] as string || '').trim();
+        const { findAgentByApiKey, getClientBalance } = await import('./invoicing');
+        const agent = await findAgentByApiKey(apiKey);
+        if (!agent) return reply.code(401).send({ error: 'invalid api key' });
+        const { clientUsername } = req.params as any;
+        return await getClientBalance(clientUsername);
+    } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
+
+// POST /admin/agents — создать агента (для Романа). Возвращает apiKey.
+fastify.post('/admin/agents', async (req, reply) => {
+    try {
+        const b = (req.body || {}) as { name?: string; webhookUrl?: string };
+        if (!b.name) return reply.code(400).send({ error: 'name required' });
+        const { generateApiKey } = await import('./invoicing');
+        const apiKey = generateApiKey();
+        const agent = await prisma.agent.create({
+            data: { name: b.name, apiKey, webhookUrl: b.webhookUrl || null },
+        });
+        return { id: agent.id, name: agent.name, apiKey: agent.apiKey, webhookUrl: agent.webhookUrl };
+    } catch (e: any) { return reply.code(500).send({ error: e.message }); }
+});
+
 // ── Согласование: отправить Роману черновик для клиента (он реагирует ⚡/💩) ─
 fastify.post('/admin/approval/send', async (req, reply) => {
     try {
@@ -2624,7 +2697,35 @@ const start = async () => {
                         "rawText" TEXT,
                         "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
                     )`);
-                console.log('[STARTUP] ✓ Dialogue.botId + Meeting + Approval + Payment tables ensured');
+                // Agent + Invoice (биллинг через @wallet)
+                await prisma.$executeRawUnsafe(`
+                    CREATE TABLE IF NOT EXISTS "Agent" (
+                        "id" SERIAL PRIMARY KEY,
+                        "name" TEXT NOT NULL,
+                        "apiKey" TEXT NOT NULL UNIQUE,
+                        "webhookUrl" TEXT,
+                        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )`);
+                await prisma.$executeRawUnsafe(`
+                    CREATE TABLE IF NOT EXISTS "Invoice" (
+                        "id" SERIAL PRIMARY KEY,
+                        "agentId" INTEGER NOT NULL,
+                        "orderId" TEXT NOT NULL,
+                        "clientUsername" TEXT NOT NULL,
+                        "amount" TEXT NOT NULL,
+                        "currency" TEXT NOT NULL,
+                        "status" TEXT NOT NULL DEFAULT 'PENDING',
+                        "remindersSent" INTEGER NOT NULL DEFAULT 0,
+                        "paymentId" INTEGER,
+                        "paidAt" TIMESTAMP(3),
+                        "expiresAt" TIMESTAMP(3) NOT NULL,
+                        "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP
+                    )`);
+                await prisma.$executeRawUnsafe(`CREATE UNIQUE INDEX IF NOT EXISTS "Invoice_agentId_orderId_key" ON "Invoice" ("agentId", "orderId")`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Invoice_status_idx" ON "Invoice" ("status")`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Invoice_clientUsername_idx" ON "Invoice" ("clientUsername")`);
+                await prisma.$executeRawUnsafe(`CREATE INDEX IF NOT EXISTS "Invoice_expiresAt_idx" ON "Invoice" ("expiresAt")`);
+                console.log('[STARTUP] ✓ Dialogue.botId + Meeting + Approval + Payment + Agent + Invoice tables ensured');
             } catch (e: any) {
                 console.error('[STARTUP] ⚠️ botId boot-guard failed:', e.message);
             }
@@ -2654,6 +2755,14 @@ const start = async () => {
                 const { startBookingRemindersCron } = await import('./bookingReminders');
                 startBookingRemindersCron();
             } catch (e) { console.error('[STARTUP] booking reminders failed:', e); }
+            // Cron напоминаний по неоплаченным счетам — только на Артуре
+            // (счета идут через @wallet Артура).
+            if (persona.runsOutreachCrons) {
+                try {
+                    const { startInvoiceRemindersCron } = await import('./invoiceReminders');
+                    startInvoiceRemindersCron();
+                } catch (e) { console.error('[STARTUP] invoice reminders failed:', e); }
+            }
             // DNAI proactive health probe (60s per TZ §5) — обновляет
             // circuit-state, чтобы listener в реальном времени знал когда
             // Аида недоступна и работал автономно с локальным контекстом.

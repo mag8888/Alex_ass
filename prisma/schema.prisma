@@ -158,6 +158,36 @@ model Meeting {
   @@index([status])
 }
 
+// Внешний агент (использует наш API для выставления счетов).
+model Agent {
+  id          Int      @id @default(autoincrement())
+  name        String
+  apiKey      String   @unique
+  webhookUrl  String?
+  createdAt   DateTime @default(now())
+}
+
+// Счёт на оплату от агента клиенту (через @wallet Артура).
+model Invoice {
+  id              Int      @id @default(autoincrement())
+  agentId         Int
+  orderId         String   // ключ идемпотентности от агента
+  clientUsername  String   // кому выставлен счёт (без @)
+  amount          String   // строкой — поддержка любых валют/точностей
+  currency        String   // USDT | TON | USD | RUB | ...
+  status          String   @default("PENDING") // PENDING | PAID | EXPIRED | CANCELLED
+  remindersSent   Int      @default(0)
+  paymentId       Int?     // FK на Payment.id когда оплачено
+  paidAt          DateTime?
+  expiresAt       DateTime
+  createdAt       DateTime @default(now())
+
+  @@unique([agentId, orderId])
+  @@index([status])
+  @@index([clientUsername])
+  @@index([expiresAt])
+}
+
 // Черновик на согласование Роману (реакция ⚡/💩). Персистентно — переживает
 // редеплои (раньше было in-memory и терялось).
 model Approval {
